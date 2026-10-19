@@ -1,0 +1,13 @@
+{
+  "name": "text-tunnel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DB 없이 같은 방에 접속한 기기끼리 텍스트·사진·동영상을 주고받는 메신저",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

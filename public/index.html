@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="style.css">
+  <title>Text Tunnel</title>
+</head>
+<body>
+  <!-- 입장 -->
+  <form id="entry" class="entry" hidden novalidate>
+    <div class="brand">
+      <img src="icon.svg" alt="" class="brand-icon">
+      <h1>Text Tunnel</h1>
+      <p>같은 방에 들어온 기기끼리 주고받아요</p>
+    </div>
+
+    <div class="seg" role="tablist">
+      <button type="button" role="tab" id="tabJoin" aria-selected="true">들어가기</button>
+      <button type="button" role="tab" id="tabCreate" aria-selected="false">새 방 만들기</button>
+    </div>
+
+    <label class="fld">
+      <span>방 이름</span>
+      <input id="roomInput" type="text" maxlength="30" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="예: 우리집">
+    </label>
+    <label class="fld">
+      <span>방 비밀번호</span>
+      <input id="pwInput" type="password" autocomplete="off" placeholder="4자 이상">
+    </label>
+    <label class="fld">
+      <span>이 기기 이름</span>
+      <input id="nameInput" type="text" maxlength="20" placeholder="예: 휴대폰">
+    </label>
+
+    <button type="submit" id="entryBtn" class="primary">들어가기</button>
+    <p id="entryErr" class="err" role="alert"></p>
+    <p class="foot">모두 나가면 방과 대화가 바로 사라져요</p>
+  </form>
+
+  <!-- 대화 -->
+  <main id="chat" hidden>
+    <header>
+      <div class="title">
+        <strong id="roomName">방</strong>
+        <span class="status"><span id="dot" class="dot"></span><span id="status">연결 중…</span></span>
+      </div>
+      <button id="invite" class="icon-btn" title="초대 링크 복사" aria-label="초대 링크 복사">
+        <svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+      </button>
+      <button id="leave" class="text-btn">나가기</button>
+    </header>
+
+    <div id="scroller" class="scroller">
+      <div id="empty" class="empty">
+        <div id="emptyAlone">
+          <p class="empty-title">아직 나 혼자 있어요</p>
+          <p class="empty-sub">다른 기기에서 <b id="emptyRoom"></b> 방에<br>같은 비밀번호로 들어오세요</p>
+          <button id="emptyInvite" class="pill">초대 링크 복사</button>
+        </div>
+        <div id="emptyReady" hidden>
+          <p class="empty-title">연결됐어요</p>
+          <p class="empty-sub">메시지·사진·동영상을 보내 보세요<br>새로고침하면 대화는 사라져요</p>
+        </div>
+      </div>
+      <ol id="list"></ol>
+    </div>
+
+    <form id="composer">
+      <label class="attach" title="사진·동영상·파일" aria-label="파일 첨부">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <input id="file" type="file" multiple hidden>
+      </label>
+      <div class="field">
+        <textarea id="text" rows="1" placeholder="메시지" enterkeyhint="enter"></textarea>
+        <button id="sendBtn" type="submit" class="send" aria-label="보내기" disabled>
+          <svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+        </button>
+      </div>
+    </form>
+
+    <div id="drop" class="drop" hidden><div>여기에 놓으면 보내요</div></div>
+  </main>
+
+  <!-- 나가기 확인 -->
+  <div id="sheet" class="sheet" hidden>
+    <div class="sheet-card" role="dialog" aria-labelledby="sheetTitle">
+      <p id="sheetTitle" class="sheet-title">방에서 나갈까요?</p>
+      <p id="sheetSub" class="sheet-sub"></p>
+      <button id="sheetOk" class="danger">나가기</button>
+      <button id="sheetCancel" class="plain">취소</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
