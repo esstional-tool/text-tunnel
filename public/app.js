@@ -388,25 +388,58 @@ async function shrink(file) {
 }
 
 // 파일 하나를 8MB 조각으로 순서대로 올린다. 서버가 다 모이면 상대에게 알린다
-function uploadOne(file, batch, onProgress) {
-  const CHUNK = 8 * 1024 * 1024;
-  const uid = randId();
-  return new Promise((resolve, reject) => {
-    const sendChunk = (offset) => {
-      const part = file.slice(offset, offset + CHUNK);
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', api('upload', { uid, offset, total: file.size, name: file.name, ...(batch ? { batch } : {}) }));
-      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-      xhr.upload.onprogress = (e) => onProgress(offset + e.loaded);
-      xhr.onload = () => {
-        if (xhr.status !== 200) return reject(new Error(xhr.responseText || '실패'));
-        if (xhr.responseText === 'done') resolve(); else sendChunk(offset + part.size);
-      };
-      xhr.onerror = () => reject(new Error('연결이 끊겼어요'));
-      xhr.send(part);
-    };
-    sendChunk(0);
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+// 입장권이 살아 있는지 확인하고, 죽었으면(서버 재시작 등) 다시 입장해 새 입장권을 받을 때까지 기다린다
+async function ensureJoined() {
+  if (token && (await fetch(api('ping')).catch(() => null))?.ok) return;
+  es?.close(); token = null; joinRoom();
+  for (let i = 0; i < 40 && !token; i++) await sleep(500);
+}
+
+// 조각 하나를 올린다. 실패해도 예외를 던지지 않고 { status, text } 로 돌려준다 (0 = 연결이 끊김·시간 초과)
+function postChunk(uid, file, offset, batch, onProgress) {
+  const part = file.slice(offset, offset + UPLOAD_CHUNK);
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', api('upload', { uid, offset, total: file.size, name: file.name, ...(batch ? { batch } : {}) }));
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.timeout = 120000; // 휴대폰 네트워크가 멈춰 버린 경우
+    xhr.upload.onprogress = (e) => onProgress(offset + e.loaded);
+    xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText, size: part.size });
+    xhr.onerror = xhr.ontimeout = () => resolve({ status: 0, text: '' });
+    xhr.send(part);
   });
+}
+
+// 파일 하나를 8MB 조각으로 순서대로 올린다. 서버가 다 모이면 상대에게 알린다.
+// 연결 끊김·서버 재시작(Render 배포·깨어남)·입장권 만료에 대비해 최대 5번까지 다시 시도하며,
+// 다시 시도할 때는 서버에 받은 위치를 물어 이어서 올린다 (서버가 모르면 처음부터) — 이슈 #11
+const UPLOAD_CHUNK = 8 * 1024 * 1024;
+const RETRY_MAX = 5;
+async function uploadOne(file, batch, onProgress, onRetry) {
+  let uid = randId();
+  let offset = 0;
+  let tries = 0;
+  for (;;) {
+    const r = await postChunk(uid, file, offset, batch, onProgress);
+    if (r.status === 200) {
+      tries = 0;
+      if (r.text === 'done') return;
+      offset += r.size;
+      continue;
+    }
+    // 다시 해도 똑같은 결과일 실패는 바로 알린다 (크기 초과, 서버 메모리 가득, 잘못된 요청)
+    if ([400, 413, 507].includes(r.status)) throw new Error(r.text || '실패');
+    if (++tries > RETRY_MAX) throw new Error(r.status ? (r.text || `오류 ${r.status}`).slice(0, 80) : '연결이 끊겼어요');
+    onRetry?.(tries);
+    await sleep(1000 * 2 ** (tries - 1)); // 1·2·4·8·16초
+    await ensureJoined();
+    const s = await fetch(api('upload', { uid })).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+    if (s?.done) return;                              // 다 올라갔는데 응답만 끊긴 경우
+    if (s) offset = s.received;                       // 받은 데까지 건너뛰고 이어서
+    else { uid = randId(); offset = 0; }              // 서버가 모름(재시작) → 처음부터
+  }
 }
 
 // 고른 파일들을 한 묶음으로 보낸다. 사진은 같은 batch로 올려 받는 쪽에서 앨범 하나로 묶이게 한다
@@ -434,9 +467,12 @@ async function sendFiles(files, original) {
   let done = 0;
   const failed = [];
   for (const [i, f] of prepared.entries()) {
-    if (files.length > 1) label.textContent = `${what} 보내는 중… ${i + 1}/${files.length}`;
+    const sending = files.length > 1 ? `${what} 보내는 중… ${i + 1}/${files.length}` : `${what} 보내는 중…`;
+    label.textContent = sending;
     try {
-      await uploadOne(f, kindOf(f) === 'image' ? batch : null, (sent) => { fill.style.width = `${((done + sent) / total) * 100}%`; });
+      await uploadOne(f, kindOf(f) === 'image' ? batch : null,
+        (sent) => { fill.style.width = `${((done + sent) / total) * 100}%`; label.textContent = sending; },
+        (n) => { label.textContent = `연결이 끊겨 다시 시도하는 중… (${n}/${RETRY_MAX})`; });
     } catch (e) { failed.push(`${f.name}: ${e.message}`); }
     done += f.size;
   }
