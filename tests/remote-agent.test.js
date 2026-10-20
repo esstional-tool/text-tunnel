@@ -20,6 +20,11 @@ function bannerVisible() {
   const script = `Add-Type 'using System;using System.Runtime.InteropServices;public class W{[DllImport("user32.dll",CharSet=CharSet.Unicode)]public static extern IntPtr FindWindow(string c,string t);[DllImport("user32.dll")]public static extern bool IsWindowVisible(IntPtr h);}'; $h=[W]::FindWindow([NullString]::Value,'text-tunnel-remote-banner'); if($h -eq [IntPtr]::Zero){'none'}elseif([W]::IsWindowVisible($h)){'visible'}else{'hidden'}`;
   return execFileSync(PS, ['-NoProfile', '-Command', script], { encoding: 'utf8' }).trim();
 }
+// 띠 창을 일부러 최상위에서 내리거나(false), 지금 최상위인지(null) 확인 — "다른 창이 덮은 상황"을 흉내 낸다
+function topmost(drop) {
+  const script = `Add-Type 'using System;using System.Runtime.InteropServices;public class T{[DllImport("user32.dll",CharSet=CharSet.Unicode)]public static extern IntPtr FindWindow(string c,string t);[DllImport("user32.dll")]public static extern int GetWindowLong(IntPtr h,int i);[DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr a,int x,int y,int cx,int cy,uint f);}'; $h=[T]::FindWindow([NullString]::Value,'text-tunnel-remote-banner'); if($h -eq [IntPtr]::Zero){'none';exit}; ${drop ? "[void][T]::SetWindowPos($h,[IntPtr](-2),0,0,0,0,0x0053);" : ''} if(([T]::GetWindowLong($h,-20) -band 8) -ne 0){'topmost'}else{'normal'}`;
+  return execFileSync(PS, ['-NoProfile', '-Command', script], { encoding: 'utf8' }).trim();
+}
 // JPEG 가로·세로 (SOF 마커) 읽기
 function jpegSize(b) {
   let i = 2;
@@ -53,7 +58,7 @@ function listen(path, token) {
   try {
     // 메신저에서 "새 기기 연결" 코드를 받는 것과 같다 — PC 가 열쇠를 갖고, 에이전트가 코드로 같은 열쇠를 받는다
     const { code, key } = await post('pair/start', {});
-    agent = spawn(EXE, ['--server', B, '--code', code, '--config', cfg], { stdio: 'ignore' });
+    agent = spawn(EXE, ['--server', B, '--code', code, '--config', cfg, '--quiet'], { stdio: 'ignore' }); // --quiet: 알림 토스트·소리 끔 (띠는 그대로)
     await sleep(2500);
     ok(fs.existsSync(path.join(cfg, 'key.txt')) && fs.readFileSync(path.join(cfg, 'key.txt'), 'ascii').trim() === key, '에이전트가 짝 코드로 같은 열쇠를 받아 저장함');
     ok(bannerVisible() === 'hidden', '보는 사람이 없으면 "원격 접속 중" 띠가 안 보임');
@@ -66,6 +71,17 @@ function listen(path, token) {
     const frames = lv.events.filter((e) => e.type === 'frame');
     ok(frames.length >= 5, `보는 사람이 들어오자 에이전트가 화면을 보내기 시작 (3.5초에 ${frames.length}장 ≈ 초당 ${(frames.length / 3.5).toFixed(1)}장)`);
     ok(bannerVisible() === 'visible', '보는 동안 "원격 접속 중" 띠가 화면에 떠 있음');
+
+    // 띠가 다른 창에 가려지는 상황: 일부러 최상위에서 내려도 에이전트가 1초 안팎에 다시 올린다
+    ok(topmost(false) === 'topmost', '띠가 최상위 창으로 떠 있음');
+    // 내리는 것과 확인을 한 호출 안에서 한다 — 따로 확인하면 PowerShell 이 뜨는 사이 에이전트가 먼저 올려 버려, 복구 시험이 아무것도 시험하지 않게 된다
+    ok(topmost(true) === 'normal', '(시험) 띠를 최상위에서 내려 다른 창이 덮은 상황을 만듦 — 내린 직후 상태가 최상위가 아님');
+    await sleep(2500);
+    ok(topmost(false) === 'topmost', '에이전트가 띠를 다시 최상위로 올려놓음 (덮여도 복구)');
+
+    // 알림·소리는 조종당하는 PC 에서만 — 보는 쪽이 받는 신호에는 agent·frame 만 있다 (새 종류가 없음)
+    const kinds = [...new Set(lv.events.map((e) => e.type))].sort().join(',');
+    ok(kinds === 'agent,frame', `보는 쪽이 받는 신호는 agent·frame 뿐 — 접속 알림이 보는 쪽으로 가지 않음 (받은 종류: ${kinds})`);
 
     const f = await fetch(`${B}/api/remote/frame?token=${v.token}`);
     const buf = Buffer.from(await f.arrayBuffer());
