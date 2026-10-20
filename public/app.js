@@ -170,6 +170,7 @@ function connect() {
   es.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === 'presence') onPresence(m.users);
+    else if (m.type === 'clear') { clearList(); toast(m.from === myId ? '대화를 지웠어요' : `${m.name}에서 대화를 지웠어요`); }
     else add(m);
   };
 }
@@ -265,7 +266,42 @@ function saveLink(src, fname, cls) {
   return a;
 }
 
+// 사진은 앨범 말풍선에 담는다. 한 번에 고른 사진(같은 batch)은 같은 말풍선에 이어 붙인다
+function addToAlbum(album, src, m) {
+  const img = new Image(); img.src = src; img.alt = m.fname; img.loading = 'lazy';
+  img.dataset.fname = m.fname;
+  img.onclick = () => openViewer(img);
+  const foot0 = album.querySelector('.album-foot');
+  if (foot0) foot0.before(img); else album.append(img);
+  const n = album.querySelectorAll('img').length;
+  album.className = `bubble album ${n === 1 ? 'n1' : n === 2 ? 'n2' : n === 3 ? 'n3' : n === 4 ? 'n4' : 'nmany'}`;
+  if (n >= 2) {
+    let foot = album.querySelector('.album-foot');
+    if (!foot) {
+      foot = el('div', 'album-foot'); foot.append(el('span'), el('button', null, '모두 저장'));
+      foot.querySelector('button').onclick = () => saveAll(album);
+      album.append(foot);
+    }
+    foot.querySelector('span').textContent = `사진 ${n}장`;
+  }
+}
+
+function saveAll(album) {
+  for (const img of album.querySelectorAll('img')) {
+    const a = el('a'); a.href = img.src; a.download = img.dataset.fname; document.body.append(a); a.click(); a.remove();
+  }
+}
+
 function add(m) {
+  if (m.type === 'file' && m.batch && m.mime.startsWith('image/')) {
+    const album = [...$('list').querySelectorAll('.bubble.album')].find((b) => b.dataset.batch === m.batch);
+    if (album) {
+      const sc = $('scroller'); const atBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
+      addToAlbum(album, m.src || api(`file/${m.fid}`), m);
+      if (atBottom) sc.scrollTop = sc.scrollHeight;
+      return;
+    }
+  }
   const { li, line } = row(m);
   let bubble;
 
@@ -281,17 +317,14 @@ function add(m) {
     const src = m.src || api(`file/${m.fid}`);
     const isImg = m.mime.startsWith('image/');
     const isVid = m.mime.startsWith('video/');
-    if (isImg || isVid) {
+    if (isImg) {
+      bubble = el('div', 'bubble album n1');
+      bubble.dataset.batch = m.batch || m.mid || String(Math.random());
+      addToAlbum(bubble, src, m);
+    } else if (isVid) {
       bubble = el('div', 'bubble media');
-      if (isImg) {
-        const img = new Image(); img.src = src; img.alt = m.fname; img.loading = 'lazy';
-        img.onclick = () => window.open(src, '_blank');
-        bubble.append(img);
-      } else {
-        const v = el('video'); v.src = src; v.controls = true; v.playsInline = true; v.preload = 'metadata';
-        bubble.append(v);
-      }
-      bubble.append(saveLink(src, m.fname, 'save-chip'));
+      const v = el('video'); v.src = src; v.controls = true; v.playsInline = true; v.preload = 'metadata';
+      bubble.append(v, saveLink(src, m.fname, 'save-chip'));
     } else {
       bubble = el('div', 'bubble doc');
       const ic = el('div', 'doc-icon'); ic.append(svg(ICON_FILE));
@@ -311,6 +344,7 @@ function sys(text) { place(el('li', 'sys', text)); }
 /* ── 보내기 ───────────────────────────── */
 async function sendText(e) {
   e.preventDefault();
+  sendTray(); // 미리보기에 골라 둔 사진·파일도 같이 보낸다
   const text = $('text').value;
   if (!text.trim()) return;
   $('text').value = ''; syncInput();
@@ -320,37 +354,188 @@ async function sendText(e) {
   if (!others) toast('상대 기기가 없어서 아무도 받지 못했어요');
 }
 
-function upload(file) {
-  if (DEMO) return add({ type: 'file', from: myId, fname: file.name, mime: file.type, size: file.size, at: Date.now(), src: URL.createObjectURL(file) });
+const randId = () => crypto.randomUUID?.() || String(Math.random()).slice(2) + Date.now();
+const kindOf = (f) => (f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : 'file');
+
+// 카톡 '일반 화질'처럼 큰 사진은 긴 변 2048px JPEG로 줄인다. 줄일 수 없거나 더 커지면 원본 그대로
+async function shrink(file) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 1.5 * 1024 * 1024) return file;
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const scale = Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close?.();
+    const blob = await new Promise((ok) => c.toBlob(ok, 'image/jpeg', 0.85));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch { return file; }
+}
+
+// 파일 하나를 8MB 조각으로 순서대로 올린다. 서버가 다 모이면 상대에게 알린다
+function uploadOne(file, batch, onProgress) {
+  const CHUNK = 8 * 1024 * 1024;
+  const uid = randId();
+  return new Promise((resolve, reject) => {
+    const sendChunk = (offset) => {
+      const part = file.slice(offset, offset + CHUNK);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', api('upload', { uid, offset, total: file.size, name: file.name, ...(batch ? { batch } : {}) }));
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      xhr.upload.onprogress = (e) => onProgress(offset + e.loaded);
+      xhr.onload = () => {
+        if (xhr.status !== 200) return reject(new Error(xhr.responseText || '실패'));
+        if (xhr.responseText === 'done') resolve(); else sendChunk(offset + part.size);
+      };
+      xhr.onerror = () => reject(new Error('연결이 끊겼어요'));
+      xhr.send(part);
+    };
+    sendChunk(0);
+  });
+}
+
+// 고른 파일들을 한 묶음으로 보낸다. 사진은 같은 batch로 올려 받는 쪽에서 앨범 하나로 묶이게 한다
+async function sendFiles(files, original) {
+  files = files.filter((f) => f.size > 0);
+  if (!files.length) return;
+  const batch = randId().replace(/[^\w-]/g, '').slice(0, 40);
+  if (DEMO) {
+    for (const f of files) add({ type: 'file', from: myId, fname: f.name, mime: f.type, size: f.size, batch, at: Date.now(), src: URL.createObjectURL(f) });
+    return;
+  }
+  const imgs = files.filter((f) => kindOf(f) === 'image').length;
+  const what = imgs === files.length ? `사진 ${imgs}장` : `${files.length}개`;
   const li = el('li', 'row mine');
   const line = el('div', 'line');
   const b = el('div', 'bubble pending');
-  const label = el('div', null, `${file.name} 보내는 중…`);
+  const label = el('div', null, `${what} 보내는 중…`);
   const bar = el('div', 'bar'); const fill = el('i'); bar.append(fill);
   b.append(label, bar); line.append(b); li.append(line);
   place(li);
 
-  const fail = (msg) => { b.classList.add('failed'); label.textContent = `${file.name} · ${msg}`; bar.remove(); };
-  if (!file.size) return fail('빈 파일은 보낼 수 없어요');
+  const prepared = [];
+  for (const f of files) prepared.push(original || kindOf(f) !== 'image' ? f : await shrink(f));
+  const total = prepared.reduce((s, f) => s + f.size, 0);
+  let done = 0;
+  const failed = [];
+  for (const [i, f] of prepared.entries()) {
+    if (files.length > 1) label.textContent = `${what} 보내는 중… ${i + 1}/${files.length}`;
+    try {
+      await uploadOne(f, kindOf(f) === 'image' ? batch : null, (sent) => { fill.style.width = `${((done + sent) / total) * 100}%`; });
+    } catch (e) { failed.push(`${f.name}: ${e.message}`); }
+    done += f.size;
+  }
+  if (!failed.length) return li.remove();
+  b.classList.add('failed'); bar.remove();
+  label.textContent = `${failed.length}개를 못 보냈어요 · ${failed.join(', ')}`;
+}
 
-  // 8MB씩 나눠 순서대로 보낸다. 서버가 다 모이면 상대에게 알린다.
-  const CHUNK = 8 * 1024 * 1024;
-  const uid = crypto.randomUUID?.() || String(Math.random()).slice(2);
-  const sendChunk = (offset) => {
-    const part = file.slice(offset, offset + CHUNK);
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', api('upload', { uid, offset, total: file.size, name: file.name }));
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-    xhr.upload.onprogress = (e) => { fill.style.width = `${((offset + e.loaded) / file.size) * 100}%`; };
-    xhr.onload = () => {
-      if (xhr.status !== 200) return fail(xhr.responseText || '실패');
-      if (xhr.responseText === 'done') li.remove();
-      else sendChunk(offset + part.size);
-    };
-    xhr.onerror = () => fail('연결이 끊겼어요');
-    xhr.send(part);
-  };
-  sendChunk(0);
+/* ── 보내기 전 미리보기 (트레이) ─────────── */
+let tray = []; // { file, url }
+function addToTray(files) {
+  const list = [...files];
+  if (list.some((f) => !f.size)) toast('빈 파일은 뺐어요');
+  for (const file of list.filter((f) => f.size)) {
+    tray.push({ file, url: kindOf(file) === 'file' ? null : URL.createObjectURL(file) });
+  }
+  closeAttach();
+  renderTray();
+}
+
+function renderTray() {
+  $('tray').hidden = !tray.length;
+  const list = $('trayList'); list.innerHTML = '';
+  tray.forEach((t, i) => {
+    const th = el('div', 'thumb');
+    const k = kindOf(t.file);
+    if (k === 'image') { const img = new Image(); img.src = t.url; img.alt = t.file.name; th.append(img); }
+    else if (k === 'video') {
+      const v = el('video'); v.src = t.url + '#t=0.1'; v.muted = true; v.preload = 'metadata'; v.playsInline = true;
+      th.append(v, el('span', 'badge', '동영상'));
+    } else {
+      const d = el('div', 'doc-thumb'); d.append(svg(ICON_FILE), el('span', null, t.file.name)); th.append(d);
+    }
+    const x = el('button', 'remove'); x.type = 'button'; x.setAttribute('aria-label', `${t.file.name} 빼기`); x.append(svg('M6 6l12 12M18 6L6 18'));
+    x.onclick = () => { if (t.url) URL.revokeObjectURL(t.url); tray.splice(i, 1); renderTray(); };
+    th.append(x);
+    list.append(th);
+  });
+  const imgs = tray.filter((t) => kindOf(t.file) === 'image').length;
+  const vids = tray.filter((t) => kindOf(t.file) === 'video').length;
+  const docs = tray.length - imgs - vids;
+  $('originalWrap').hidden = !imgs;
+  $('trayInfo').textContent = [imgs && `사진 ${imgs}`, vids && `동영상 ${vids}`, docs && `파일 ${docs}`].filter(Boolean).join(' · ')
+    + ` · ${fmtSize(tray.reduce((s, t) => s + t.file.size, 0))}`;
+  $('traySend').textContent = `${tray.length}개 보내기`;
+  syncInput();
+  list.scrollLeft = list.scrollWidth; // 방금 고른 것이 보이게 (scrollIntoView 는 바깥 페이지까지 움직여서 쓰지 않음)
+}
+
+function clearTray() {
+  for (const t of tray) if (t.url) URL.revokeObjectURL(t.url);
+  tray = []; renderTray();
+}
+
+function sendTray() {
+  if (!tray.length) return;
+  const files = tray.map((t) => t.file);
+  const original = $('original').checked;
+  clearTray();
+  sendFiles(files, original);
+}
+
+/* ── 첨부 패널 ─────────────────────────── */
+function toggleAttach(open = $('attachPanel').hidden) {
+  $('attachPanel').hidden = !open;
+  $('attachBtn').setAttribute('aria-expanded', open);
+  if (open) $('text').blur();
+}
+const closeAttach = () => toggleAttach(false);
+
+/* ── 사진 크게 보기 ─────────────────────── */
+let viewerList = [], viewerIdx = 0;
+function openViewer(img) {
+  viewerList = [...$('list').querySelectorAll('.bubble.album img')];
+  viewerIdx = Math.max(0, viewerList.indexOf(img));
+  $('viewer').hidden = false;
+  showViewer();
+}
+function showViewer() {
+  const img = viewerList[viewerIdx];
+  if (!img) return closeViewer();
+  $('viewerImg').src = img.src; $('viewerImg').alt = img.alt;
+  $('viewerSave').href = img.src; $('viewerSave').download = img.dataset.fname || 'photo';
+  $('viewerCount').textContent = `${viewerIdx + 1} / ${viewerList.length}`;
+  $('viewerPrev').hidden = viewerIdx === 0;
+  $('viewerNext').hidden = viewerIdx === viewerList.length - 1;
+}
+const stepViewer = (d) => { const n = viewerIdx + d; if (n >= 0 && n < viewerList.length) { viewerIdx = n; showViewer(); } };
+const closeViewer = () => { $('viewer').hidden = true; $('viewerImg').removeAttribute('src'); };
+
+/* ── 대화 지우기 ───────────────────────── */
+function clearList() {
+  closeViewer();
+  $('list').innerHTML = '';
+  $('scroller').classList.remove('has-msgs');
+}
+
+async function clearChat() {
+  closeSheets();
+  if (DEMO) { clearList(); return toast('대화를 지웠어요'); }
+  const r = await fetch(api('clear'), { method: 'POST' }).catch(() => null);
+  if (!r?.ok) toast('지우지 못했어요. 연결을 확인해 주세요');
+  // 화면은 서버가 보내는 'clear' 알림을 받아 양쪽에서 같이 비운다
+}
+
+function askConfirm(title, sub, okText, onOk) {
+  $('menu').hidden = true;
+  $('confirmTitle').textContent = title;
+  $('confirmSub').textContent = sub;
+  $('confirmOk').textContent = okText;
+  $('confirmOk').onclick = onOk;
+  $('confirm').hidden = false;
+  $('confirmCancel').focus();
 }
 
 /* ── 메뉴 ─────────────────────────────── */
@@ -375,7 +560,7 @@ function unpair() {
   closeSheets();
   leaveNow();
   key = null; store.del('tt.key');
-  $('list').innerHTML = ''; $('scroller').classList.remove('has-msgs');
+  clearList(); clearTray(); closeAttach();
   show('welcome');
 }
 
@@ -426,7 +611,7 @@ function toast(msg) {
 function syncInput() {
   const t = $('text');
   t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px';
-  $('sendBtn').disabled = !t.value.trim();
+  $('sendBtn').disabled = !t.value.trim() && !tray.length;
 }
 
 // 안드로이드 공유 메뉴로 들어온 것: 서비스워커가 캐시에 넣어 두고 /?shared=1 로 연다
@@ -436,6 +621,7 @@ async function sendShared() {
   while (!token) await new Promise((ok) => setTimeout(ok, 300));
   const cache = await caches.open('tt-share').catch(() => null);
   if (!cache) return;
+  const files = [];
   for (const req of await cache.keys()) {
     const r = await cache.match(req);
     if (req.url.endsWith('/shared/text')) {
@@ -443,10 +629,11 @@ async function sendShared() {
       if (text.trim()) await fetch(api('send'), { method: 'POST', body: JSON.stringify({ text }) }).catch(() => {});
     } else {
       const blob = await r.blob();
-      upload(new File([blob], decodeURIComponent(r.headers.get('x-name') || 'file'), { type: blob.type }));
+      files.push(new File([blob], decodeURIComponent(r.headers.get('x-name') || 'file'), { type: blob.type }));
     }
     await cache.delete(req);
   }
+  sendFiles(files, false); // 공유 메뉴로 보낸 사진들도 앨범 하나로
 }
 
 /* ── 이벤트 연결 ───────────────────────── */
@@ -471,12 +658,42 @@ $('text').onkeydown = (e) => {
     e.preventDefault(); $('composer').requestSubmit();
   }
 };
-// 캡처 이미지를 Ctrl+V 하면 바로 보낸다
+// 캡처 이미지를 Ctrl+V 하면 미리보기에 올린다
 $('text').onpaste = (e) => {
   const fs = [...(e.clipboardData?.files || [])];
-  if (fs.length) { e.preventDefault(); fs.forEach(upload); }
+  if (fs.length) { e.preventDefault(); addToTray(fs); }
 };
-$('file').onchange = (e) => { [...e.target.files].forEach(upload); e.target.value = ''; };
+$('text').onfocus = () => { if (IS_MOBILE) closeAttach(); };
+
+// + 첨부 패널: 앨범(사진·동영상 선택 화면), 카메라(휴대폰), 파일
+$('attachBtn').onclick = () => toggleAttach();
+$('pickCameraBtn').hidden = !IS_MOBILE;
+for (const [btn, input] of [['pickMediaBtn', 'pickMedia'], ['pickCameraBtn', 'pickCamera'], ['pickFileBtn', 'pickFile']]) {
+  $(btn).onclick = () => $(input).click();
+  $(input).onchange = (e) => { addToTray(e.target.files); e.target.value = ''; };
+}
+$('traySend').onclick = sendTray;
+$('trayCancel').onclick = clearTray;
+
+// 사진 크게 보기: 좌우 버튼·화살표 키·옆으로 밀기
+$('viewerClose').onclick = closeViewer;
+$('viewerPrev').onclick = () => stepViewer(-1);
+$('viewerNext').onclick = () => stepViewer(1);
+$('viewerImg').onclick = (e) => e.stopPropagation();
+$('viewer').onclick = (e) => { if (e.target === $('viewer')) closeViewer(); };
+let touchX = null;
+$('viewer').addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+$('viewer').addEventListener('touchend', (e) => {
+  if (touchX == null) return;
+  const dx = e.changedTouches[0].clientX - touchX; touchX = null;
+  if (Math.abs(dx) > 50) stepViewer(dx < 0 ? 1 : -1);
+});
+document.addEventListener('keydown', (e) => {
+  if ($('viewer').hidden) return;
+  if (e.key === 'ArrowLeft') stepViewer(-1);
+  if (e.key === 'ArrowRight') stepViewer(1);
+  if (e.key === 'Escape') closeViewer();
+});
 
 $('menuBtn').onclick = openMenu;
 $('mQr').onclick = () => { closeSheets(); openQr(); };
@@ -489,9 +706,9 @@ $('extCopy').onclick = () => copy($('extUrl').textContent, '복사했어요. 새
 $('extReload').onclick = () => { try { sessionStorage.setItem('tt.openExt', '1'); } catch {} location.reload(); };
 $('extClean').onclick = () => { $('extClean').disabled = true; $('extResult').textContent = '지우는 중…'; toExt({ type: 'clean' }); };
 $('extAuto').onchange = (e) => toExt({ type: 'auto', on: e.target.checked });
-$('mUnpair').onclick = () => { $('menu').hidden = true; $('confirm').hidden = false; $('confirmCancel').focus(); };
+$('mUnpair').onclick = () => askConfirm('연결을 해제할까요?', '이 기기에서 연결 정보가 지워져요. 다시 쓰려면 QR로 새로 연결해야 해요.', '연결 해제', unpair);
+$('mClear').onclick = () => askConfirm('대화를 지울까요?', '양쪽 화면의 대화와 서버에 남은 사진·파일을 바로 지워요. 되돌릴 수 없어요.', '대화 지우기', clearChat);
 $('mClose').onclick = closeSheets;
-$('confirmOk').onclick = unpair;
 $('confirmCancel').onclick = closeSheets;
 for (const s of ['menu', 'confirm']) $(s).onclick = (e) => { if (e.target === $(s)) closeSheets(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheets(); });
@@ -504,7 +721,7 @@ $('chat').addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDept
 $('chat').addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
 $('chat').addEventListener('drop', (e) => {
   e.preventDefault(); dragDepth = 0; $('drop').hidden = true;
-  [...e.dataTransfer.files].forEach(upload);
+  addToTray(e.dataTransfer.files);
 });
 
 addEventListener('beforeinstallprompt', (e) => {
@@ -553,15 +770,24 @@ function startDemo(scene) {
   if (scene === 'wait') return;
   onPresence([{ id: 'me', name: 'PC' }, { id: 'p', name: '휴대폰' }]);
   const t = Date.now() - 5 * 60000;
-  const img = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420"><defs><linearGradient id="g" x2="1" y2="1"><stop offset="0" stop-color="#ffb36b"/><stop offset="1" stop-color="#7a5cff"/></linearGradient></defs><rect width="640" height="420" fill="url(#g)"/><circle cx="470" cy="130" r="56" fill="#fff" opacity=".85"/><path d="M0 330l160-120 140 100 120-70 220 150v30H0z" fill="#2b2250" opacity=".55"/></svg>');
+  // 예시 사진 (그라데이션 풍경)
+  const pic = (a, b, w = 640, h = 420) => '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><defs><linearGradient id="g" x2="1" y2="1"><stop offset="0" stop-color="' + a + '"/><stop offset="1" stop-color="' + b + '"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/><circle cx="72%" cy="30%" r="9%" fill="#fff" opacity=".85"/><path d="M0 ' + h * .78 + 'l' + w * .25 + '-' + h * .28 + ' ' + w * .22 + ' ' + h * .24 + ' ' + w * .19 + '-' + h * .17 + ' ' + w * .34 + ' ' + h * .36 + 'v' + h * .07 + 'H0z" fill="#2b2250" opacity=".5"/></svg>';
+  const uri = (s) => 'data:image/svg+xml,' + encodeURIComponent(s);
+  const shots = [['#ffb36b', '#7a5cff'], ['#5ee7df', '#3a7bd5'], ['#f9d976', '#f39f86']];
   [
     { type: 'msg', from: 'p', name: '휴대폰', text: '이 링크 PC에서 열어줘', at: t },
     { type: 'msg', from: 'p', name: '휴대폰', text: 'https://www.example.com/docs/getting-started', at: t + 1000 },
     { type: 'msg', from: 'me', text: '받았어 👍', at: t + 60000 },
-    { type: 'file', from: 'p', name: '휴대폰', fname: 'IMG_2041.jpg', mime: 'image/svg+xml', size: 2_340_000, at: t + 120000, src: img },
+    ...shots.map(([a, b], i) => ({ type: 'file', from: 'p', name: '휴대폰', fname: `IMG_204${i}.jpg`, mime: 'image/svg+xml', size: 1_800_000, batch: 'demo-album', at: t + 120000, src: uri(pic(a, b)) })),
     { type: 'file', from: 'me', fname: '견적서_v2.pdf', mime: 'application/pdf', size: 482_000, at: t + 180000, src: '#' },
     { type: 'msg', from: 'me', text: '이거 확인하고 회신 부탁해.\n오늘 6시 전까지!', at: t + 181000 },
   ].forEach(add);
+  if (scene === 'attach') toggleAttach(true);
+  if (scene === 'tray') {
+    const f = (s, n) => new File([s], n, { type: 'image/svg+xml' });
+    addToTray([f(pic('#a1c4fd', '#c2e9fb'), 'IMG_3001.jpg'), f(pic('#fbc2eb', '#a6c1ee'), 'IMG_3002.jpg'), f(pic('#84fab0', '#8fd3f4'), 'IMG_3003.jpg'), new File(['%PDF'], '회의록.pdf', { type: 'application/pdf' })]);
+  }
+  if (scene === 'viewer') openViewer($('list').querySelector('.bubble.album img'));
 }
 
 /* ── 시작 ─────────────────────────────── */
