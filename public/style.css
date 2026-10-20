@@ -217,6 +217,64 @@ time { font-size: 11px; color: var(--muted); white-space: nowrap; flex: none; pa
 .send svg { width: 18px; height: 18px; stroke-width: 2.6; }
 .send:disabled { opacity: 0; transform: scale(.6); pointer-events: none; }
 
+.attach svg { transition: transform .2s; }
+.attach[aria-expanded="true"] { color: var(--accent); }
+.attach[aria-expanded="true"] svg { transform: rotate(45deg); }
+
+/* ── 첨부 패널 (카톡 + 메뉴) ───────────── */
+.attach-panel {
+  display: flex; justify-content: space-around; gap: 8px; padding: 14px 12px 10px;
+  background: var(--bar); border-top: .5px solid var(--line);
+}
+.attach-item { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; color: var(--text); min-width: 64px; }
+.attach-icon { width: 52px; height: 52px; border-radius: 18px; display: grid; place-items: center; color: #fff; }
+.attach-icon svg { width: 26px; height: 26px; }
+.attach-icon.album { background: #34c759; }
+.attach-icon.camera { background: #0a84ff; }
+.attach-icon.file { background: #ff9f0a; }
+.attach-item:active .attach-icon { transform: scale(.94); }
+
+/* ── 보내기 전 미리보기 ─────────────────── */
+.tray { background: var(--bar); border-top: .5px solid var(--line); padding: 10px 0 8px; }
+.tray-list { display: flex; gap: 8px; overflow-x: auto; padding: 0 12px 4px; scroll-snap-type: x proximity; }
+.thumb { position: relative; flex: none; width: 76px; height: 76px; border-radius: 12px; overflow: hidden; background: var(--bg-2); scroll-snap-align: start; }
+.thumb img, .thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb .doc-thumb { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px; font-size: 10px; color: var(--muted); text-align: center; overflow: hidden; }
+.thumb .doc-thumb span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thumb .badge { position: absolute; left: 5px; bottom: 5px; font-size: 10px; color: #fff; background: rgba(0, 0, 0, .55); padding: 1px 5px; border-radius: 6px; }
+.thumb .remove { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: rgba(0, 0, 0, .6); }
+.thumb .remove svg { width: 13px; height: 13px; stroke-width: 3; }
+.tray-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px 0; font-size: 13px; }
+.original { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+.original input { accent-color: var(--accent); width: 16px; height: 16px; }
+.tray-info { flex: 1; color: var(--muted); text-align: right; }
+.tray-cancel { padding: 7px 10px; border-radius: 999px; color: var(--muted); }
+.tray-send { padding: 7px 16px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-weight: 600; }
+
+/* ── 여러 장을 한 말풍선에 (앨범) ─────────── */
+.bubble.album { padding: 0; overflow: hidden; display: grid; gap: 2px; width: min(280px, 100%); background: var(--bg-2); }
+.bubble.album.n2, .bubble.album.n4 { grid-template-columns: 1fr 1fr; }
+.bubble.album.n3, .bubble.album.nmany { grid-template-columns: 1fr 1fr 1fr; }
+.bubble.album img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: zoom-in; }
+.bubble.album.n1 img { aspect-ratio: auto; max-height: 52vh; }
+.album-foot { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-size: 12px; color: var(--muted); background: var(--bg-2); }
+.album-foot button { color: var(--accent); font-weight: 600; }
+
+/* ── 사진 크게 보기 ─────────────────────── */
+.viewer { position: fixed; inset: 0; z-index: 40; background: #000; display: grid; place-items: center; touch-action: pan-y; }
+.viewer img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
+.viewer-top {
+  position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 6px;
+  padding: max(10px, env(safe-area-inset-top)) 10px 10px 18px; color: #fff; font-size: 14px;
+  background: linear-gradient(rgba(0, 0, 0, .55), transparent);
+}
+.viewer-top span { flex: 1; }
+.viewer-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: #fff; }
+.viewer-btn:hover { background: rgba(255, 255, 255, .14); }
+.viewer-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: rgba(255, 255, 255, .12); }
+.viewer-nav.prev { left: 12px; } .viewer-nav.next { right: 12px; }
+@media (pointer: coarse) { .viewer-nav { display: none; } }
+
 /* ── 시트 · 드롭 · 토스트 ─────────────── */
 .sheet { position: fixed; inset: 0; z-index: 20; background: var(--scrim); display: flex; align-items: flex-end; justify-content: center; padding: 12px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
 .sheet-card { width: 100%; max-width: 400px; background: var(--bg); border-radius: 16px; padding: 18px 12px 10px; display: flex; flex-direction: column; gap: 4px; text-align: center; box-shadow: 0 10px 40px rgba(0, 0, 0, .2); }

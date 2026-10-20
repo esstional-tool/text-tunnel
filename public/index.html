@@ -143,11 +143,40 @@
       <ol id="list"></ol>
     </div>
 
+    <!-- 보내기 전 미리보기 (카톡처럼 골라 둔 사진을 한 번 더 확인) -->
+    <div id="tray" class="tray" hidden>
+      <div id="trayList" class="tray-list"></div>
+      <div class="tray-bar">
+        <label id="originalWrap" class="original"><input type="checkbox" id="original"> 원본 화질</label>
+        <span id="trayInfo" class="tray-info tabular"></span>
+        <button id="trayCancel" type="button" class="tray-cancel">취소</button>
+        <button id="traySend" type="button" class="tray-send">보내기</button>
+      </div>
+    </div>
+
+    <!-- + 를 누르면 열리는 첨부 패널 -->
+    <div id="attachPanel" class="attach-panel" hidden>
+      <button id="pickMediaBtn" type="button" class="attach-item">
+        <span class="attach-icon album"><svg viewBox="0 0 24 24"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 16l4.5-4.5a1.5 1.5 0 0 1 2 0L16 17M14 14l1.5-1.5a1.5 1.5 0 0 1 2 0L20 15"/><circle cx="15.5" cy="8.5" r="1.5"/></svg></span>
+        앨범
+      </button>
+      <button id="pickCameraBtn" type="button" class="attach-item">
+        <span class="attach-icon camera"><svg viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h1.5l1.5-2h6l1.5 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.5"/></svg></span>
+        카메라
+      </button>
+      <button id="pickFileBtn" type="button" class="attach-item">
+        <span class="attach-icon file"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5"/></svg></span>
+        파일
+      </button>
+      <input id="pickMedia" type="file" accept="image/*,video/*" multiple hidden>
+      <input id="pickCamera" type="file" accept="image/*" capture="environment" hidden>
+      <input id="pickFile" type="file" multiple hidden>
+    </div>
+
     <form id="composer">
-      <label class="attach" title="사진·동영상·파일" aria-label="파일 첨부">
+      <button id="attachBtn" type="button" class="attach" title="사진·동영상·파일" aria-label="첨부" aria-expanded="false">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-        <input id="file" type="file" multiple hidden>
-      </label>
+      </button>
       <div class="field">
         <textarea id="text" rows="1" placeholder="메시지" enterkeyhint="enter"></textarea>
         <button id="sendBtn" type="submit" class="send" aria-label="보내기" disabled>
@@ -165,6 +194,7 @@
       <p class="sheet-title" id="menuName"></p>
       <button id="mQr" class="row-btn">새 기기 연결 (QR·코드 보기)</button>
       <button id="mInstall" class="row-btn" hidden>앱으로 설치</button>
+      <button id="mClear" class="row-btn danger-text">대화 지우기</button>
       <button id="mExt" class="row-btn">방문 기록 지우기 (크롬 확장)</button>
       <button id="mRename" class="row-btn">이 기기 이름 바꾸기</button>
       <button id="mUnpair" class="row-btn danger-text">연결 해제</button>
@@ -175,11 +205,23 @@
   <!-- 연결 해제 확인 -->
   <div id="confirm" class="sheet" hidden>
     <div class="sheet-card" role="dialog" aria-labelledby="confirmTitle">
-      <p id="confirmTitle" class="sheet-title">연결을 해제할까요?</p>
-      <p class="sheet-sub">이 기기에서 연결 정보가 지워져요.<br>다시 쓰려면 QR로 새로 연결해야 해요.</p>
-      <button id="confirmOk" class="danger">연결 해제</button>
+      <p id="confirmTitle" class="sheet-title"></p>
+      <p id="confirmSub" class="sheet-sub"></p>
+      <button id="confirmOk" class="danger"></button>
       <button id="confirmCancel" class="plain">취소</button>
     </div>
+  </div>
+
+  <!-- 사진 크게 보기 -->
+  <div id="viewer" class="viewer" hidden>
+    <div class="viewer-top">
+      <span id="viewerCount" class="tabular"></span>
+      <a id="viewerSave" class="viewer-btn" download title="저장" aria-label="저장"><svg viewBox="0 0 24 24"><path d="M12 4v12M6 11l6 6 6-6M5 20h14"/></svg></a>
+      <button id="viewerClose" class="viewer-btn" title="닫기" aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <img id="viewerImg" alt="">
+    <button id="viewerPrev" class="viewer-nav prev" aria-label="이전 사진"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <button id="viewerNext" class="viewer-nav next" aria-label="다음 사진"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
   </div>
 
   <div id="toast" class="toast" role="status"></div>
