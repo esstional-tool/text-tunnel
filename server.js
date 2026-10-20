@@ -1,6 +1,7 @@
 // text-tunnel: 저장소 없는 실시간 중계 서버 (의존성 0)
-// - 방 이름 + 방 비밀번호로 들어간다. 같은 방에 접속해 있는 기기끼리만 주고받는다.
-// - 마지막 사람이 나가면 방은 메시지·파일과 함께 사라진다. 디스크에는 아무것도 쓰지 않는다.
+// - 두 기기가 처음 한 번 QR/6자리 코드로 짝을 맺으면, 같은 비밀 열쇠를 각자 브라우저에 보관한다.
+// - 앱을 열면 열쇠의 해시로 방에 들어간다. 방은 최대 2대, 둘 다 나가면 메시지·파일과 함께 사라진다.
+// - 서버는 열쇠도, 대화도 디스크나 로그에 남기지 않는다.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -10,13 +11,17 @@ const PORT = Number(process.env.PORT) || 8787;
 const MAX_MB = Number(process.env.MAX_MB) || 100;        // 파일 하나 상한
 const MEM_MB = Number(process.env.MEM_MB) || 300;        // 서버가 들고 있는 파일 전체 상한
 const MAX_ROOMS = Number(process.env.MAX_ROOMS) || 50;
+const ROOM_SIZE = 2;
 const FILE_TTL = 10 * 60 * 1000;
+const PAIR_TTL = 5 * 60 * 1000;     // 짝 코드 유효 시간
 const GRACE = 30 * 1000;            // 연결이 끊긴 기기를 기다려 주는 시간 (화면 꺼짐·새로고침)
 const CHUNK_MAX = 16 * 1024 * 1024; // 브라우저는 8MB씩 보낸다. 여유를 둔 상한
 const PUB = path.join(__dirname, 'public');
 
-const rooms = new Map();  // roomKey -> { name, salt, hash, members: Map<token, Member>, files: Map, uploads: Map }
-const tokens = new Map(); // token -> roomKey
+const rooms = new Map();  // roomId -> { members: Map<token, Member>, files: Map, uploads: Map }
+const tokens = new Map(); // token -> roomId
+const pairs = new Map();  // 6자리 코드 -> { key, timer }
+const misses = new Map(); // ip -> { n, until } 틀린 코드 시도 제한
 let fileBytes = 0;
 
 const MIME = {
@@ -26,17 +31,13 @@ const MIME = {
 };
 
 /* ── 방 ─────────────────────────────────── */
-const roomKey = (name) => name.trim().toLowerCase();
-const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32);
-
-function destroyRoom(key) {
-  const room = rooms.get(key);
+function destroyRoom(id) {
+  const room = rooms.get(id);
   if (!room) return;
   for (const [t, m] of room.members) { tokens.delete(t); clearTimeout(m.timer); m.res?.end(); }
   for (const f of room.files.values()) { clearTimeout(f.timer); fileBytes -= f.buf.length; }
   for (const u of room.uploads.values()) clearTimeout(u.timer);
-  rooms.delete(key);
-  console.log(`방 폭파: ${room.name} (남은 방 ${rooms.size}개)`);
+  rooms.delete(id);
 }
 
 function removeMember(room, token) {
@@ -46,7 +47,7 @@ function removeMember(room, token) {
   m.res?.end();
   room.members.delete(token);
   tokens.delete(token);
-  if (!room.members.size) destroyRoom(roomKey(room.name));
+  if (!room.members.size) destroyRoom(room.id);
   else presence(room);
 }
 
@@ -56,8 +57,8 @@ function broadcast(room, ev) {
 }
 
 function presence(room) {
-  const users = [...room.members].filter(([, m]) => m.res).map(([, m]) => ({ id: m.id, name: m.name }));
-  broadcast(room, { type: 'presence', room: room.name, users });
+  const users = [...room.members.values()].filter((m) => m.res).map((m) => ({ id: m.id, name: m.name }));
+  broadcast(room, { type: 'presence', users });
 }
 
 function auth(url) {
@@ -65,6 +66,27 @@ function auth(url) {
   const room = rooms.get(tokens.get(token));
   const member = room?.members.get(token);
   return member ? { room, member, token } : null;
+}
+
+/* ── 짝 코드 ────────────────────────────── */
+// 헷갈리는 글자(0/O, 1/I/L)를 뺀 6자리
+const CODE_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+function newCode() {
+  let c;
+  do c = [...crypto.randomBytes(6)].map((b) => CODE_CHARS[b % CODE_CHARS.length]).join('');
+  while (pairs.has(c));
+  return c;
+}
+
+const clientIp = (req) => (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
+function blocked(ip) {
+  const m = misses.get(ip);
+  return m && m.until > Date.now() && m.n >= 10;
+}
+function miss(ip) {
+  const m = misses.get(ip);
+  if (!m || m.until < Date.now()) misses.set(ip, { n: 1, until: Date.now() + 10 * 60 * 1000 });
+  else m.n++;
 }
 
 /* ── HTTP 도구 ──────────────────────────── */
@@ -79,6 +101,13 @@ function readBody(req, limit, cb) {
   });
   req.on('end', () => { if (!over) cb(null, Buffer.concat(chunks)); });
   req.on('error', (e) => { if (!over) cb(e); });
+}
+
+function readJson(req, cb) {
+  readBody(req, 4096, (err, body) => {
+    if (err) return cb(null);
+    try { cb(JSON.parse(body)); } catch { cb(null); }
+  });
 }
 
 function send(res, code, body) {
@@ -124,50 +153,71 @@ const server = http.createServer((req, res) => {
   const p = url.pathname;
   if (!p.startsWith('/api/')) return serveStatic(url, res);
 
-  // 방 만들기 / 들어가기: { room, password, name, create }
-  if (p === '/api/join' && req.method === 'POST') {
-    return readBody(req, 4096, (err, body) => {
-      let j;
-      try { j = JSON.parse(body); } catch { return send(res, 400, { error: '잘못된 요청이에요' }); }
-      const name = String(j.room || '').trim().slice(0, 30);
-      const pw = String(j.password || '');
-      const nick = String(j.name || '').trim().slice(0, 20) || '기기';
-      if (!name) return send(res, 400, { error: '방 이름을 입력하세요' });
-      if (pw.length < 4) return send(res, 400, { error: '비밀번호는 4자 이상이어야 해요' });
+  if (p === '/api/health') return send(res, 200, 'ok');
 
-      const key = roomKey(name);
-      let room = rooms.get(key);
-      if (j.create) {
-        if (room) return send(res, 409, { error: '이미 있는 방 이름이에요. 들어가기를 눌러 주세요' });
-        if (rooms.size >= MAX_ROOMS) return send(res, 429, { error: '서버에 방이 너무 많아요. 잠시 뒤에 다시 해 주세요' });
-        const salt = crypto.randomBytes(16);
-        room = { name, salt, hash: hashPw(pw, salt), members: new Map(), files: new Map(), uploads: new Map() };
-        rooms.set(key, room);
-        console.log(`방 생성: ${name} (방 ${rooms.size}개)`);
-      } else {
-        if (!room) return send(res, 404, { error: '그런 방이 없어요. 이름을 확인하거나 새로 만들어 주세요' });
-        if (!crypto.timingSafeEqual(hashPw(pw, room.salt), room.hash)) return send(res, 403, { error: '비밀번호가 맞지 않아요' });
+  // 짝 맺기 시작: 열쇠를 가진 기기가 6자리 코드를 받는다. { key? } — 없으면 새 열쇠를 만든다
+  if (p === '/api/pair/start' && req.method === 'POST') {
+    return readJson(req, (j) => {
+      const key = typeof j?.key === 'string' && /^[A-Za-z0-9_-]{43}$/.test(j.key) ? j.key : crypto.randomBytes(32).toString('base64url');
+      const code = newCode();
+      pairs.set(code, { key, timer: setTimeout(() => pairs.delete(code), PAIR_TTL) });
+      send(res, 200, { code, key, expiresIn: PAIR_TTL / 1000 });
+    });
+  }
+
+  // 짝 맺기 완료: 다른 기기가 코드를 내고 열쇠를 받는다. 코드는 한 번 쓰면 사라진다
+  if (p === '/api/pair/claim' && req.method === 'POST') {
+    const ip = clientIp(req);
+    if (blocked(ip)) return send(res, 429, { error: '코드를 너무 많이 틀렸어요. 10분 뒤에 다시 해 주세요' });
+    return readJson(req, (j) => {
+      const code = String(j?.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const pair = pairs.get(code);
+      if (!pair) { miss(ip); return send(res, 404, { error: '코드가 맞지 않거나 시간이 지났어요. PC에서 새 코드를 받아 주세요' }); }
+      clearTimeout(pair.timer);
+      pairs.delete(code);
+      send(res, 200, { key: pair.key });
+    });
+  }
+
+  // 방 입장: { key, name, device } — 방 번호는 열쇠의 해시. 열쇠 자체는 어디에도 보관하지 않는다
+  if (p === '/api/join' && req.method === 'POST') {
+    return readJson(req, (j) => {
+      const key = String(j?.key || '');
+      const device = String(j?.device || '').slice(0, 64);
+      const name = String(j?.name || '').trim().slice(0, 20) || '기기';
+      if (!/^[A-Za-z0-9_-]{43}$/.test(key) || !device) return send(res, 400, { error: '연결 정보가 올바르지 않아요. 다시 연결해 주세요' });
+      const id = crypto.createHash('sha256').update(key).digest('hex');
+
+      let room = rooms.get(id);
+      if (!room) {
+        if (rooms.size >= MAX_ROOMS) return send(res, 429, { error: '서버가 붐벼요. 잠시 뒤에 다시 열어 주세요' });
+        room = { id, members: new Map(), files: new Map(), uploads: new Map() };
+        rooms.set(id, room);
       }
+      // 같은 기기가 다시 들어오면(새로고침·앱 재실행) 이전 자리를 비운다
+      for (const [t, m] of room.members) if (m.device === device) { clearTimeout(m.timer); m.res?.end(); room.members.delete(t); tokens.delete(t); }
+      if (room.members.size >= ROOM_SIZE) return send(res, 409, { error: '이미 두 기기가 연결돼 있어요' });
 
       const token = crypto.randomBytes(24).toString('base64url');
-      const member = { id: crypto.randomUUID(), name: nick, res: null, timer: null };
-      // 아무도 연결하지 않으면 GRACE 뒤에 정리
-      member.timer = setTimeout(() => removeMember(room, token), GRACE);
+      const member = { id: crypto.randomUUID(), device, name, res: null, timer: null };
+      member.timer = setTimeout(() => removeMember(room, token), GRACE); // 연결을 안 열면 정리
       room.members.set(token, member);
-      tokens.set(token, key);
-      send(res, 200, { token, id: member.id, room: room.name });
+      tokens.set(token, id);
+      send(res, 200, { token, id: member.id });
     });
   }
 
   const a = auth(url);
-  if (!a) return send(res, 401, '방이 사라졌거나 다시 들어와야 해요');
+  if (!a) return send(res, 401, '다시 연결해야 해요');
   const { room, member, token } = a;
+
+  if (p === '/api/ping') return send(res, 200, 'ok');
 
   if (p === '/api/events' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.write('retry: 2000\n\n');
     clearTimeout(member.timer);
-    member.res?.end(); // 같은 기기가 재접속하면 이전 연결을 정리
+    member.res?.end(); // 같은 탭이 재접속하면 이전 연결을 정리
     member.res = res;
     presence(room);
     const ping = setInterval(() => res.write(': ping\n\n'), 25000);
@@ -180,8 +230,6 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-
-  if (p === '/api/ping') return send(res, 200, 'ok');
 
   if (p === '/api/leave' && req.method === 'POST') {
     removeMember(room, token);
@@ -199,7 +247,7 @@ const server = http.createServer((req, res) => {
     });
   }
 
-  // 파일은 8MB 조각으로 순서대로 올라온다 (터널·프록시의 요청 크기 제한을 피하려고)
+  // 파일은 8MB 조각으로 순서대로 올라온다 (프록시의 요청 크기 제한을 피하려고)
   // ?uid=업로드ID&offset=시작바이트&total=전체크기&name=파일명
   if (p === '/api/upload' && req.method === 'POST') {
     const uid = url.searchParams.get('uid');
@@ -223,7 +271,7 @@ const server = http.createServer((req, res) => {
 
     return readBody(req, Math.min(CHUNK_MAX, total - offset), (err, buf) => {
       if (err) { clearTimeout(up.timer); room.uploads.delete(uid); return send(res, 413, 'chunk too large'); }
-      if (!rooms.has(roomKey(room.name))) return send(res, 410, '방이 사라졌어요');
+      if (!rooms.has(room.id)) return send(res, 410, '연결이 끝났어요');
       up.chunks.push(buf);
       up.received += buf.length;
       if (up.received < up.total) return send(res, 200, 'more');
@@ -251,6 +299,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`text-tunnel 실행 중: http://localhost:${PORT}`);
+  if (process.env.RENDER) return; // Render 안에서는 내부 주소라 의미 없음
   for (const nets of Object.values(require('os').networkInterfaces()))
     for (const n of nets || []) if (n.family === 'IPv4' && !n.internal) console.log(`같은 와이파이에서: http://${n.address}:${PORT}`);
 });

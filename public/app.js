@@ -1,88 +1,137 @@
-// 기록은 남기지 않는다. 방 입장권(token)은 이 탭에만, 기기 이름·마지막 방 이름만 이 기기에 기억한다.
+// 두 기기가 QR/코드로 한 번 짝을 맺으면 같은 열쇠를 각자 이 기기에 보관하고, 앱을 열 때마다 그 열쇠로 자동 연결한다.
+// 대화는 어디에도 저장하지 않는다. 이 기기에 남는 것은 열쇠·기기 이름·기기 ID뿐이다.
 const $ = (id) => document.getElementById(id);
-const safe = (s) => ({
-  get(k) { try { return s().getItem(k); } catch { return null; } },
-  set(k, v) { try { s().setItem(k, v); } catch {} },
-  del(k) { try { s().removeItem(k); } catch {} },
-});
-const local = safe(() => localStorage);
-const tab = safe(() => sessionStorage);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
 
-// 서버 없이 화면만 보는 모드: /#demo, 또는 window.TT_DEMO = 'chat' | 'alone' | 'entry'
+// 서버 없이 화면만 보는 모드: /#demo, 또는 window.TT_DEMO = 'welcome' | 'code' | 'qr' | 'install-android' | 'install-ios' | 'wait' | 'chat'
 const DEMO = location.hash === '#demo' ? 'chat' : window.TT_DEMO;
 
-let session = null; // { token, id, room }
-try { session = JSON.parse(tab.get('tt.session')); } catch {}
-let mode = 'join';
+const UA = navigator.userAgent;
+const IS_IOS = /iPhone|iPad|iPod/.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
+const IS_MOBILE = IS_IOS || /Android|Mobile/i.test(UA);
+const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+let key = store.get('tt.key');
+let myName = store.get('tt.name') || guessName();
+let device = store.get('tt.device');
+if (!device) { device = crypto.randomUUID?.() || String(Math.random()).slice(2) + Date.now(); store.set('tt.device', device); }
+
+let token = null;   // 이번 접속의 입장권
+let myId = null;    // 이번 접속에서 내 메시지를 알아보는 ID
 let others = 0;
-let peers = null; // 직전 접속 목록 (id -> name). null 이면 아직 첫 수신 전
+let peers = null;   // 직전 접속 목록 (id -> name). null 이면 아직 첫 수신 전
 let unread = 0;
 let es;
+let installPrompt = null;
+let qrTimer;
 
-const api = (path, extra = {}) => `/api/${path}?${new URLSearchParams({ token: session?.token || '', ...extra })}`;
-const me = () => session?.id;
-
-/* ── 입장 ─────────────────────────────── */
-function setMode(m) {
-  mode = m;
-  $('tabJoin').setAttribute('aria-selected', m === 'join');
-  $('tabCreate').setAttribute('aria-selected', m === 'create');
-  $('entryBtn').textContent = m === 'join' ? '들어가기' : '방 만들고 들어가기';
-  $('pwInput').placeholder = m === 'join' ? '방 비밀번호' : '4자 이상 정해 주세요';
-  $('entryErr').textContent = '';
-}
-
-function showEntry(err = '') {
-  es?.close();
-  $('chat').hidden = true; $('entry').hidden = false;
-  $('entryErr').textContent = err;
-  $('nameInput').value ||= local.get('tt.name') || guessName();
-  $('roomInput').value ||= local.get('tt.room') || '';
-  $('pwInput').value = '';
-  ($('roomInput').value ? $('pwInput') : $('roomInput')).focus({ preventScroll: true });
-}
-
-async function submitEntry(e) {
-  e.preventDefault();
-  const room = $('roomInput').value.trim();
-  const password = $('pwInput').value;
-  const name = $('nameInput').value.trim() || guessName();
-  if (!room) return ($('entryErr').textContent = '방 이름을 입력하세요');
-  if (password.length < 4) return ($('entryErr').textContent = mode === 'create' ? '비밀번호는 4자 이상으로 정해 주세요' : '비밀번호를 입력하세요');
-  local.set('tt.name', name); local.set('tt.room', room);
-  if (DEMO) return startDemo('chat', room);
-
-  $('entryBtn').disabled = true;
-  const r = await fetch('/api/join', { method: 'POST', body: JSON.stringify({ room, password, name, create: mode === 'create' }) }).catch(() => null);
-  $('entryBtn').disabled = false;
-  if (!r) return ($('entryErr').textContent = '서버에 연결할 수 없어요');
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    $('entryErr').textContent = j.error || '들어가지 못했어요';
-    if (r.status === 404) setTimeout(() => { setMode('create'); $('entryErr').textContent = '그런 방이 없어서 새로 만들 수 있어요'; }, 0);
-    return;
-  }
-  session = j;
-  tab.set('tt.session', JSON.stringify(session));
-  enterChat();
-}
+const api = (path, extra = {}) => `/api/${path}?${new URLSearchParams({ token: token || '', ...extra })}`;
+const post = (path, body) => fetch(`/api/${path}`, { method: 'POST', body: JSON.stringify(body) });
 
 function guessName() {
-  const ua = navigator.userAgent;
-  if (/iPad|Tablet/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return '태블릿';
-  if (/Android|iPhone|Mobile/i.test(ua)) return '휴대폰';
+  if (/iPad|Tablet/i.test(navigator.userAgent)) return '태블릿';
+  if (/Android|iPhone|Mobile/i.test(navigator.userAgent)) return '휴대폰';
   return 'PC';
 }
 
-/* ── 대화방 ───────────────────────────── */
-function enterChat() {
-  $('entry').hidden = true; $('chat').hidden = false;
-  $('roomName').textContent = session.room;
-  $('emptyRoom').textContent = session.room;
-  peers = null;
+/* ── 화면 전환 ─────────────────────────── */
+const SCREENS = ['boot', 'welcome', 'codeForm', 'qrScreen', 'install', 'chat'];
+function show(id) { for (const s of SCREENS) $(s).hidden = s !== id; }
+
+/* ── 서버 깨우기 (무료 서버는 쉬면 잠든다) ─── */
+async function wake() {
+  const slow = setTimeout(() => show('boot'), 1200);
+  for (;;) {
+    const r = await fetch('/api/health', { cache: 'no-store' }).catch(() => null);
+    if (r?.ok) break;
+    await new Promise((ok) => setTimeout(ok, 2000));
+  }
+  clearTimeout(slow);
+}
+
+/* ── 짝 맺기 ──────────────────────────── */
+async function openQr() {
+  show('qrScreen');
+  $('qrBox').innerHTML = ''; $('qrCode').textContent = '······'; $('qrTimer').textContent = ''; $('qrRenew').hidden = true;
+  if (DEMO) return drawQr('K7M4QX', 300);
+  const r = await post('pair/start', key ? { key } : {}).catch(() => null);
+  if (!r?.ok) { $('qrTimer').textContent = '코드를 받지 못했어요. 잠시 뒤 다시 해 주세요'; $('qrRenew').hidden = false; return; }
+  const j = await r.json();
+  if (!key) { key = j.key; store.set('tt.key', key); }
+  drawQr(j.code, j.expiresIn);
+  if (!token) joinRoom(); // 미리 방에 들어가 있다가 상대가 오면 바로 대화 화면으로
+}
+
+function drawQr(code, seconds) {
+  const link = `${location.origin}/#pair=${code}`;
+  const qr = qrcode(0, 'M');
+  qr.addData(link); qr.make();
+  $('qrBox').innerHTML = qr.createSvgTag({ scalable: true, margin: 0 });
+  $('qrBox').querySelector('svg').setAttribute('aria-hidden', 'true');
+  $('qrCode').textContent = `${code.slice(0, 3)} ${code.slice(3)}`;
+  const end = Date.now() + seconds * 1000;
+  clearInterval(qrTimer);
+  const tick = () => {
+    const left = Math.max(0, Math.round((end - Date.now()) / 1000));
+    $('qrTimer').textContent = left ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} 동안 쓸 수 있어요` : '시간이 지났어요';
+    if (!left) { clearInterval(qrTimer); $('qrBox').style.opacity = .25; $('qrRenew').hidden = false; }
+  };
+  $('qrBox').style.opacity = 1;
+  tick(); qrTimer = setInterval(tick, 1000);
+}
+
+function closeQr() {
+  clearInterval(qrTimer);
+  if (key) enterChat(); else show('welcome');
+}
+
+async function claim(code) {
+  code = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length !== 6) return ($('codeErr').textContent = '6자리를 입력하세요');
+  $('codeBtn').disabled = true; $('codeErr').textContent = '';
+  const r = await post('pair/claim', { code }).catch(() => null);
+  $('codeBtn').disabled = false;
+  if (!r) return ($('codeErr').textContent = '서버에 연결할 수 없어요');
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { show('codeForm'); $('codeErr').textContent = j.error || '연결하지 못했어요'; return; }
+  key = j.key; store.set('tt.key', key);
+  joinRoom();
+  if (IS_MOBILE && !STANDALONE) showInstall(); else enterChat();
+}
+
+function showInstall() {
+  show('install');
+  $('installIos').hidden = !IS_IOS;
+  $('installAndroid').hidden = IS_IOS;
+  $('installBtn').hidden = !installPrompt;
+  $('installManual').hidden = !!installPrompt;
+}
+
+async function runInstall() {
+  if (!installPrompt) return showInstall();
+  installPrompt.prompt();
+  const { outcome } = await installPrompt.userChoice.catch(() => ({}));
+  installPrompt = null;
+  if (outcome === 'accepted') toast('설치했어요. 홈 화면의 아이콘으로 열 수 있어요');
+  enterChat();
+}
+
+/* ── 연결 ─────────────────────────────── */
+let joining = false;
+async function joinRoom() {
+  if (joining || !key) return;
+  joining = true;
+  const r = await post('join', { key, name: myName, device }).catch(() => null);
+  joining = false;
+  if (!r) { setStatus('off'); return setTimeout(joinRoom, 3000); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { setStatus('full', j.error); return; }
+  token = j.token; myId = j.id; peers = null;
   connect();
-  sendShared();
-  $('text').focus({ preventScroll: true });
 }
 
 function connect() {
@@ -90,9 +139,9 @@ function connect() {
   es = new EventSource(api('events'));
   es.onerror = async () => {
     setStatus('off');
-    // 방이 사라졌으면 재접속하지 않고 입장 화면으로
+    // 서버가 재시작됐거나 방이 정리됐으면 다시 들어간다
     const r = await fetch(api('ping')).catch(() => null);
-    if (r?.status === 401) roomGone('방이 사라졌어요. 다시 만들거나 들어와 주세요');
+    if (r?.status === 401) { es.close(); token = null; setTimeout(joinRoom, 500); }
   };
   es.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
@@ -101,31 +150,43 @@ function connect() {
   };
 }
 
-function roomGone(msg) {
-  es?.close();
-  session = null; tab.del('tt.session');
-  clearList();
-  showEntry(msg);
+function leaveNow() {
+  if (!token || DEMO) return;
+  navigator.sendBeacon?.(api('leave')) || fetch(api('leave'), { method: 'POST', keepalive: true }).catch(() => {});
+  es?.close(); token = null;
 }
 
 function onPresence(users) {
-  const now = new Map(users.filter((u) => u.id !== me()).map((u) => [u.id, u.name]));
+  const now = new Map(users.filter((u) => u.id !== myId).map((u) => [u.id, u.name]));
   if (peers) {
-    for (const [id, n] of now) if (!peers.has(id)) sys(`${n} 님이 들어왔어요`);
-    for (const [id, n] of peers) if (!now.has(id)) sys(`${n} 님이 나갔어요`);
+    for (const [id, n] of now) if (!peers.has(id)) sys(`${n} 연결됨`);
+    for (const [id, n] of peers) if (!now.has(id)) sys(`${n} 나감`);
   }
+  const first = !peers?.size && now.size;
   peers = now;
   others = now.size;
   setStatus(others ? 'on' : 'alone', [...now.values()]);
+  // QR 화면을 띄워 둔 채 상대가 들어오면 바로 대화로
+  if (first && !$('qrScreen').hidden) { clearInterval(qrTimer); enterChat(); toast(`${[...now.values()][0]}와 연결됐어요`); }
 }
 
-function setStatus(state, names = []) {
-  $('dot').className = `dot ${state}`;
+function setStatus(state, info) {
+  const names = Array.isArray(info) ? info : [];
+  $('dot').className = `dot ${state === 'full' ? 'off' : state}`;
+  $('peerTitle').textContent = state === 'on' ? names.join(', ') : 'Text Tunnel';
   $('status').textContent =
-    state === 'on' ? `${names.join(', ')} · ${names.length + 1}명` :
-    state === 'alone' ? '나만 있어요' : '다시 연결하는 중…';
-  $('emptyAlone').hidden = state === 'on';
+    state === 'on' ? '연결됨' :
+    state === 'alone' ? '상대 기기를 기다리는 중' :
+    state === 'full' ? (info || '연결할 수 없어요') : '다시 연결하는 중…';
+  $('emptyWait').hidden = state === 'on';
   $('emptyReady').hidden = state !== 'on';
+}
+
+function enterChat() {
+  show('chat');
+  if (!token && !DEMO) joinRoom();
+  sendShared();
+  if (!IS_MOBILE) $('text').focus({ preventScroll: true });
 }
 
 /* ── 메시지 그리기 ─────────────────────── */
@@ -138,7 +199,7 @@ const ICON_DOWN = 'M12 4v12M6 11l6 6 6-6M5 20h14';
 
 // 같은 사람이 같은 분에 연달아 보내면 이름·시간을 한 번만 보여주는 카톡식 묶음
 function row(m) {
-  const mine = m.from === me();
+  const mine = m.from === myId;
   const li = el('li', `row ${mine ? 'mine' : 'theirs'}`);
   li.dataset.group = `${m.from}|${Math.floor(m.at / 60000)}`;
   const prev = $('list').lastElementChild;
@@ -160,8 +221,6 @@ function place(li) {
   sc.classList.add('has-msgs');
   if (atBottom || li.classList.contains('mine')) sc.scrollTop = sc.scrollHeight;
 }
-
-function clearList() { $('list').innerHTML = ''; $('scroller').classList.remove('has-msgs'); }
 
 function linkify(node, text) {
   let last = 0;
@@ -218,7 +277,7 @@ function add(m) {
 
   line.append(bubble, el('time', null, fmtTime(m.at)));
   place(li);
-  if (m.from !== me() && document.hidden) { unread++; document.title = `(${unread}) Text Tunnel`; }
+  if (m.from !== myId && document.hidden) { unread++; document.title = `(${unread}) Text Tunnel`; }
 }
 
 function sys(text) { place(el('li', 'sys', text)); }
@@ -229,14 +288,14 @@ async function sendText(e) {
   const text = $('text').value;
   if (!text.trim()) return;
   $('text').value = ''; syncInput();
-  if (DEMO) return add({ type: 'msg', from: me(), text, at: Date.now() });
+  if (DEMO) return add({ type: 'msg', from: myId, text, at: Date.now() });
   const r = await fetch(api('send'), { method: 'POST', body: JSON.stringify({ text }) }).catch(() => null);
   if (!r?.ok) { $('text').value = text; syncInput(); return toast('보내지 못했어요'); }
-  if (!others) toast('방에 나만 있어서 아무도 받지 못했어요');
+  if (!others) toast('상대 기기가 없어서 아무도 받지 못했어요');
 }
 
 function upload(file) {
-  if (DEMO) return add({ type: 'file', from: me(), fname: file.name, mime: file.type, size: file.size, at: Date.now(), src: URL.createObjectURL(file) });
+  if (DEMO) return add({ type: 'file', from: myId, fname: file.name, mime: file.type, size: file.size, at: Date.now(), src: URL.createObjectURL(file) });
   const li = el('li', 'row mine');
   const line = el('div', 'line');
   const b = el('div', 'bubble pending');
@@ -248,7 +307,7 @@ function upload(file) {
   const fail = (msg) => { b.classList.add('failed'); label.textContent = `${file.name} · ${msg}`; bar.remove(); };
   if (!file.size) return fail('빈 파일은 보낼 수 없어요');
 
-  // 8MB씩 나눠 순서대로 보낸다. 서버가 다 모이면 방 사람들에게 알린다.
+  // 8MB씩 나눠 순서대로 보낸다. 서버가 다 모이면 상대에게 알린다.
   const CHUNK = 8 * 1024 * 1024;
   const uid = crypto.randomUUID?.() || String(Math.random()).slice(2);
   const sendChunk = (offset) => {
@@ -268,25 +327,30 @@ function upload(file) {
   sendChunk(0);
 }
 
-/* ── 초대 · 나가기 ─────────────────────── */
-async function invite() {
-  const link = `${location.origin}/#r/${encodeURIComponent(session.room)}`;
-  if (navigator.share && matchMedia('(pointer: coarse)').matches) {
-    try { return await navigator.share({ title: 'Text Tunnel', text: `"${session.room}" 방으로 들어와요`, url: link }); } catch { return; }
-  }
-  copy(link, '초대 링크를 복사했어요. 비밀번호는 따로 알려 주세요');
+/* ── 메뉴 ─────────────────────────────── */
+function openMenu() {
+  $('menuName').textContent = `이 기기: ${myName}`;
+  $('mInstall').hidden = STANDALONE || !(installPrompt || IS_MOBILE);
+  $('menu').hidden = false;
+}
+const closeSheets = () => { $('menu').hidden = true; $('confirm').hidden = true; };
+
+function rename() {
+  closeSheets();
+  const n = prompt('이 기기 이름', myName);
+  if (!n?.trim()) return;
+  myName = n.trim().slice(0, 20); store.set('tt.name', myName);
+  if (DEMO) return;
+  leaveNow(); joinRoom(); // 새 이름으로 다시 입장
+  toast('이름을 바꿨어요');
 }
 
-function askLeave() {
-  $('sheetSub').textContent = others ? '나가도 방은 남아 있어요' : '나만 있어서 나가면 방과 대화가 사라져요';
-  $('sheet').hidden = false;
-  $('sheetCancel').focus();
-}
-
-async function leave() {
-  $('sheet').hidden = true;
-  if (!DEMO) await fetch(api('leave'), { method: 'POST' }).catch(() => {});
-  roomGone('');
+function unpair() {
+  closeSheets();
+  leaveNow();
+  key = null; store.del('tt.key');
+  $('list').innerHTML = ''; $('scroller').classList.remove('has-msgs');
+  show('welcome');
 }
 
 /* ── 작은 도구들 ───────────────────────── */
@@ -303,7 +367,7 @@ let toastTimer;
 function toast(msg) {
   const t = $('toast');
   t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
 }
 
 function syncInput() {
@@ -316,6 +380,7 @@ function syncInput() {
 async function sendShared() {
   if (DEMO || !new URLSearchParams(location.search).has('shared')) return;
   history.replaceState(null, '', '/');
+  while (!token) await new Promise((ok) => setTimeout(ok, 300));
   const cache = await caches.open('tt-share').catch(() => null);
   if (!cache) return;
   for (const req of await cache.keys()) {
@@ -332,9 +397,20 @@ async function sendShared() {
 }
 
 /* ── 이벤트 연결 ───────────────────────── */
-$('entry').onsubmit = submitEntry;
-$('tabJoin').onclick = () => setMode('join');
-$('tabCreate').onclick = () => setMode('create');
+$('startPair').onclick = openQr;
+$('showCode').onclick = () => { show('codeForm'); $('codeErr').textContent = ''; $('codeInput').focus(); };
+$('codeBack').onclick = () => (key ? enterChat() : show('welcome'));
+$('codeForm').onsubmit = (e) => { e.preventDefault(); if (DEMO) return showInstall(); claim($('codeInput').value); };
+$('codeInput').oninput = (e) => {
+  const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  e.target.value = v.length > 3 ? `${v.slice(0, 3)} ${v.slice(3)}` : v;
+};
+$('qrClose').onclick = closeQr;
+$('qrRenew').onclick = openQr;
+$('installBtn').onclick = runInstall;
+$('installSkip').onclick = enterChat;
+$('emptyQr').onclick = openQr;
+
 $('composer').onsubmit = sendText;
 $('text').oninput = syncInput;
 // PC에서는 Enter 전송, Shift+Enter 줄바꿈. 휴대폰은 키보드 Enter가 줄바꿈.
@@ -349,13 +425,17 @@ $('text').onpaste = (e) => {
   if (fs.length) { e.preventDefault(); fs.forEach(upload); }
 };
 $('file').onchange = (e) => { [...e.target.files].forEach(upload); e.target.value = ''; };
-$('invite').onclick = invite;
-$('emptyInvite').onclick = invite;
-$('leave').onclick = askLeave;
-$('sheetOk').onclick = leave;
-$('sheetCancel').onclick = () => { $('sheet').hidden = true; };
-$('sheet').onclick = (e) => { if (e.target === $('sheet')) $('sheet').hidden = true; };
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('sheet').hidden = true; });
+
+$('menuBtn').onclick = openMenu;
+$('mQr').onclick = () => { closeSheets(); openQr(); };
+$('mInstall').onclick = () => { closeSheets(); installPrompt ? runInstall() : showInstall(); };
+$('mRename').onclick = rename;
+$('mUnpair').onclick = () => { $('menu').hidden = true; $('confirm').hidden = false; $('confirmCancel').focus(); };
+$('mClose').onclick = closeSheets;
+$('confirmOk').onclick = unpair;
+$('confirmCancel').onclick = closeSheets;
+for (const s of ['menu', 'confirm']) $(s).onclick = (e) => { if (e.target === $(s)) closeSheets(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheets(); });
 
 // 파일을 창에 끌어다 놓으면 보낸다 (PC)
 let dragDepth = 0;
@@ -368,22 +448,38 @@ $('chat').addEventListener('drop', (e) => {
   [...e.dataTransfer.files].forEach(upload);
 });
 
+addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); installPrompt = e;
+  if (!$('install').hidden) showInstall();
+});
+
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   unread = 0; document.title = 'Text Tunnel';
-  if (!DEMO && session && es?.readyState === 2) connect();
+  if (!DEMO && key && (!token || es?.readyState === 2)) { token = null; joinRoom(); }
 });
+// 창·앱을 닫으면 바로 나가서, 둘 다 닫으면 방이 즉시 사라지게 한다
+addEventListener('pagehide', leaveNow);
+addEventListener('pageshow', (e) => { if (e.persisted && key && !DEMO) { token = null; joinRoom(); } });
 
 if ('serviceWorker' in navigator && !DEMO) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 /* ── 데모 ─────────────────────────────── */
-function startDemo(scene, room = '우리집') {
-  session = { token: 'demo', id: 'me', room };
-  if (scene === 'entry') { session = null; $('roomInput').value = '우리집'; return showEntry(); }
-  $('entry').hidden = true; $('chat').hidden = false;
-  $('roomName').textContent = room; $('emptyRoom').textContent = room;
+function startDemo(scene) {
+  myId = 'me'; myName = 'PC';
+  if (scene === 'welcome') return show('welcome');
+  if (scene === 'code') { show('codeForm'); $('codeInput').value = 'K7M 4Q'; return; }
+  if (scene === 'qr') return openQr();
+  if (scene.startsWith('install')) {
+    show('install');
+    $('installIos').hidden = scene !== 'install-ios';
+    $('installAndroid').hidden = scene === 'install-ios';
+    $('installBtn').hidden = false; $('installManual').hidden = true;
+    return;
+  }
+  show('chat');
   onPresence([{ id: 'me', name: 'PC' }]);
-  if (scene === 'alone') return;
+  if (scene === 'wait') return;
   onPresence([{ id: 'me', name: 'PC' }, { id: 'p', name: '휴대폰' }]);
   const t = Date.now() - 5 * 60000;
   const img = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420"><defs><linearGradient id="g" x2="1" y2="1"><stop offset="0" stop-color="#ffb36b"/><stop offset="1" stop-color="#7a5cff"/></linearGradient></defs><rect width="640" height="420" fill="url(#g)"/><circle cx="470" cy="130" r="56" fill="#fff" opacity=".85"/><path d="M0 330l160-120 140 100 120-70 220 150v30H0z" fill="#2b2250" opacity=".55"/></svg>');
@@ -400,16 +496,10 @@ function startDemo(scene, room = '우리집') {
 /* ── 시작 ─────────────────────────────── */
 (async () => {
   if (DEMO) return startDemo(DEMO);
-  const inv = /^#r\/(.+)$/.exec(location.hash);
-  if (inv) {
-    $('roomInput').value = decodeURIComponent(inv[1]);
-    history.replaceState(null, '', location.pathname + location.search);
-  }
-  if (session?.token) {
-    const r = await fetch(api('ping')).catch(() => null);
-    if (r?.ok) return enterChat();
-    session = null; tab.del('tt.session');
-  }
-  setMode('join');
-  showEntry();
+  const pairCode = /^#pair=([A-Za-z0-9]{6})$/.exec(location.hash)?.[1];
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+  await wake();
+  if (pairCode) { show('codeForm'); $('codeInput').value = `${pairCode.slice(0, 3)} ${pairCode.slice(3)}`; return claim(pairCode); }
+  if (key) return enterChat();
+  show('welcome');
 })();
