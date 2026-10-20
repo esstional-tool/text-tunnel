@@ -1,4 +1,4 @@
-// text-tunnel 원격조종 에이전트 (이슈 #17 화면 보기, #21 PIN, #23 마우스·키보드 조종, #24 바뀐 부분만 보내기)
+// text-tunnel 원격조종 에이전트 (이슈 #17 화면 보기, #21 PIN, #23 마우스·키보드 조종, #24 바뀐 부분만 보내기, #25 화질·속도 자동 조절·코덱 선택)
 // 조종당하는 PC 에서 도는 작은 프로그램. 메신저와 같은 짝 열쇠를 가진 브라우저가 들어오면 화면을 JPEG 로 보낸다.
 //
 //   처음 한 번:  remote-agent.exe --code ABC123            (메신저 앱 메뉴 → 새 기기 연결 의 코드)
@@ -13,6 +13,7 @@
 //   · 누군가 화면을 보는 동안 화면 맨 위에 빨간 "원격 접속 중" 띠가 항상 떠 있음 (끌 수 없음, 1초마다 다시 맨 위로)
 //   · 보기 시작하는 순간 토스트 + 소리, 끝나면 토스트 — 이 PC 앞에 있는 사람에게만 (보는 쪽에는 알림 없음)
 //   · 보는 사람이 없으면 화면을 찍지도 보내지도 않음
+//   · 화질(JPEG 품질)·보내는 간격은 전송이 느려지면 스스로 낮추고 여유가 있으면 올림. 조각마다 JPEG 와 PNG 중 더 작은 것을 보냄. 보는 사람이 고른 프로필(자동/화질 우선/속도 우선)은 이 PC 가 정한 범위 안에서만 따름
 //   · 화면은 64x64 칸으로 나눠 이전 화면과 비교하고, 바뀐 곳만 조각으로 보냄 (바뀐 게 없으면 아무것도 안 보냄). 처음·큰 변화·10초마다·서버 요청 시에는 전체 화면(키 프레임)
 //   · 같은 짝 열쇠를 가진 기기가 **이 PC 의 주인이 정한 PIN** 까지 맞춰야 볼 수 있음 (PIN 은 이 PC 에만 해시로 저장, 5번 틀리면 10분 잠금)
 //   · 조종(마우스·키보드)은 보기와 별개: 이 PC 의 주인이 "원격 조종 허용"을 켜야 하고(기본 꺼짐), 보는 사람이 또 "조종 켜기"를 눌러야 함.
@@ -135,27 +136,33 @@ static class Capture
     //   형식:  size 1280 720  /  rect x y w h r g b  (줄마다. 기본 바탕은 가로 띠 무늬)
     public static string FakeDir;
 
-    // 주 모니터를 찍어 가로 maxWidth 이하로 줄인 24비트 비트맵을 돌려준다 (부른 쪽이 Dispose)
+    // 주 모니터(또는 합성 화면)를 찍어 가로 maxWidth 이하로 줄인 24비트 비트맵을 돌려준다 (부른 쪽이 Dispose)
     public static Bitmap Snap(int maxWidth, out int w, out int h)
     {
-        if (FakeDir != null) return Fake(out w, out h);
-        Rectangle b = Screen.PrimaryScreen.Bounds;
-        double scale = b.Width > maxWidth ? (double)maxWidth / b.Width : 1.0;
-        w = (int)(b.Width * scale); h = (int)(b.Height * scale);
-        using (Bitmap full = new Bitmap(b.Width, b.Height, PixelFormat.Format24bppRgb))
+        Bitmap full;
+        if (FakeDir != null) full = Fake();
+        else
         {
+            Rectangle b = Screen.PrimaryScreen.Bounds;
+            full = new Bitmap(b.Width, b.Height, PixelFormat.Format24bppRgb);
             using (Graphics g = Graphics.FromImage(full)) g.CopyFromScreen(b.Location, Point.Empty, b.Size);
-            if (scale >= 1.0) return (Bitmap)full.Clone();
+        }
+        using (full)
+        {
+            double scale = full.Width > maxWidth ? (double)maxWidth / full.Width : 1.0;
+            if (scale >= 1.0) { w = full.Width; h = full.Height; return (Bitmap)full.Clone(); }
+            w = (int)(full.Width * scale); h = (int)(full.Height * scale);
             Bitmap small = new Bitmap(w, h, PixelFormat.Format24bppRgb);
             using (Graphics g2 = Graphics.FromImage(small)) { g2.InterpolationMode = InterpolationMode.Bilinear; g2.DrawImage(full, 0, 0, w, h); }
             return small;
         }
     }
 
-    static Bitmap Fake(out int w, out int h)
+    // 합성 화면: size / rect x y w h r g b / noise x y w h seed (사진처럼 복잡한 영역 흉내 — 같은 seed 면 항상 같은 픽셀)
+    static Bitmap Fake()
     {
-        w = 1280; h = 720;
-        List<int[]> rects = new List<int[]>();
+        int w = 1280, h = 720;
+        List<int[]> rects = new List<int[]>(), noises = new List<int[]>();
         try
         {
             foreach (string line in File.ReadAllLines(Path.Combine(FakeDir, "fake-screen.txt")))
@@ -163,6 +170,7 @@ static class Capture
                 string[] p = line.Trim().Split(' ');
                 if (p[0] == "size" && p.Length >= 3) { w = Convert.ToInt32(p[1]); h = Convert.ToInt32(p[2]); }
                 else if (p[0] == "rect" && p.Length >= 8) { int[] r = new int[7]; for (int i = 0; i < 7; i++) r[i] = Convert.ToInt32(p[i + 1]); rects.Add(r); }
+                else if (p[0] == "noise" && p.Length >= 6) { int[] r = new int[5]; for (int i = 0; i < 5; i++) r[i] = Convert.ToInt32(p[i + 1]); noises.Add(r); }
             }
         }
         catch (Exception) { }
@@ -173,7 +181,45 @@ static class Capture
             for (int y = 0; y < h; y += 80) using (SolidBrush br = new SolidBrush(Color.FromArgb(40, 44, 80))) g.FillRectangle(br, 0, y, w, 40);
             foreach (int[] r in rects) using (SolidBrush br = new SolidBrush(Color.FromArgb(r[4], r[5], r[6]))) g.FillRectangle(br, r[0], r[1], r[2], r[3]);
         }
+        foreach (int[] n in noises)
+        {
+            BitmapData d = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
+            try
+            {
+                uint st = (uint)n[4] * 2654435761u + 1u;
+                for (int y = Math.Max(0, n[1]); y < Math.Min(h, n[1] + n[3]); y++)
+                    for (int x = Math.Max(0, n[0]); x < Math.Min(w, n[0] + n[2]); x++)
+                    {
+                        st = st * 1664525u + 1013904223u;
+                        int off = y * d.Stride + x * 3;
+                        Marshal.WriteByte(d.Scan0, off, (byte)(st >> 24)); Marshal.WriteByte(d.Scan0, off + 1, (byte)(st >> 16)); Marshal.WriteByte(d.Scan0, off + 2, (byte)(st >> 8));
+                    }
+            }
+            finally { bmp.UnlockBits(d); }
+        }
         return bmp;
+    }
+
+    // 한 영역을 JPEG 와 PNG 로 모두 인코딩해 더 작은 쪽을 돌려준다 (글자·UI 처럼 색이 적은 곳은 PNG 가 훨씬 작고 선명, 사진·동영상은 JPEG).
+    // PNG 인코딩은 느려서 작은 영역(100만 픽셀 이하)에만 시도한다
+    public static byte[] EncodeBest(Bitmap src, Rectangle r, long quality, out bool png)
+    {
+        byte[] jpg = EncodeJpeg(src, r, quality); png = false;
+        if ((long)r.Width * r.Height <= 1000000)
+        {
+            byte[] p = EncodePng(src, r);
+            if (p.Length < jpg.Length) { png = true; return p; }
+        }
+        return jpg;
+    }
+    static byte[] EncodePng(Bitmap src, Rectangle r)
+    {
+        using (Bitmap part = (r.Width == src.Width && r.Height == src.Height) ? (Bitmap)src.Clone() : src.Clone(r, PixelFormat.Format24bppRgb))
+        using (MemoryStream ms = new MemoryStream())
+        {
+            part.Save(ms, ImageFormat.Png);
+            return ms.ToArray();
+        }
     }
 
     // 비트맵의 한 영역을 JPEG 로 인코딩
@@ -713,6 +759,11 @@ class AgentContext : ApplicationContext
                         UI(new Action(Refresh));
                         if (!controlReported) { controlReported = true; ReportControl(); } // 연결 직후 한 번: 이 PC 의 조종 허용 상태를 알림
                     }
+                    else if (type == "profile")
+                    {
+                        string m = ev.ContainsKey("mode") ? ev["mode"] as string : null;
+                        if (m == "auto" || m == "quality" || m == "speed") pendingProfile = m; // 허용된 값만 (범위는 ApplyProfile 이 정함)
+                    }
                     else if (type == "input")
                     {
                         // 조종이 허용되어 있고, 이 에이전트가 PIN 을 확인해 준 보는 사람의 입력만 넣는다 (서버를 믿지 않고 여기서도 확인)
@@ -735,21 +786,39 @@ class AgentContext : ApplicationContext
     // 보는 사람이 있을 때만 화면을 찍는다. 이전에 보낸 화면과 비교해 바뀐 조각만 보낸다 (이슈 #24).
     // 키 프레임(전체 화면)을 보내는 경우: 처음 · 보는 사람이 없다가 생김 · 화면 크기 변화 · 바뀐 면적이 큼 · 10초마다 · 서버가 요청('key') · 전송 실패
     // 한 장을 다 보낸 뒤에 다음 장을 찍는다 → 네트워크가 느리면 저절로 프레임이 줄어든다
+    // 화질·간격 자동 조절 (이슈 #25): 올리는 데 걸린 시간(이동평균)이 길거나 서버가 "slow"(보는 사람이 못 따라옴)라고 하면 품질을 낮추고 간격을 늘리며,
+    // 여유가 있으면 조금씩 되돌린다. 프로필(자동/화질 우선/속도 우선)은 범위만 바꾼다 — 최종 결정은 항상 이 에이전트
+    volatile string pendingProfile;
+    string profile = "auto"; int quality = 60, minQ = 30, maxQ = 85, minInt = 150, maxW = 1280, interval = 200;
+    int pngN = 0, jpgN = 0;
+
+    void ApplyProfile(string mode)
+    {
+        profile = mode;
+        if (mode == "quality") { minQ = 70; maxQ = 92; quality = 85; minInt = 250; maxW = 1600; }
+        else if (mode == "speed") { minQ = 25; maxQ = 50; quality = 40; minInt = 100; maxW = 960; }
+        else { minQ = 30; maxQ = 85; quality = 60; minInt = 150; maxW = 1280; }
+        interval = Math.Max(minInt, 200);
+    }
+
     void CaptureLoop()
     {
-        const int intervalMs = 200;   // 목표 초당 5번 확인
         const int keyEveryMs = 10000; // 오래 조각만 쌓이지 않게 가끔 전체 화면
         Differ differ = new Differ();
-        bool needKey = true; DateTime lastKey = DateTime.MinValue;
+        bool needKey = true; DateTime lastKey = DateTime.MinValue, lastStats = DateTime.MinValue;
+        double ema = 0;
+        ApplyProfile("auto");
         while (!quit)
         {
             string t = token;
             if (!on || viewers == 0 || t == null) { differ.Reset(); needKey = true; Thread.Sleep(150); continue; }
+            string pp = pendingProfile;
+            if (pp != null) { pendingProfile = null; ApplyProfile(pp); needKey = true; ema = 0; } // 프로필이 바뀌면 크기·화질이 달라지므로 전체 화면부터 다시
             DateTime start = DateTime.UtcNow;
             try
             {
                 int w, h;
-                using (Bitmap bmp = Capture.Snap(1280, out w, out h))
+                using (Bitmap bmp = Capture.Snap(maxW, out w, out h))
                 {
                     List<Rectangle> rects = null; long changed = 0;
                     if (!needKey && (DateTime.UtcNow - lastKey).TotalMilliseconds < keyEveryMs)
@@ -762,28 +831,49 @@ class AgentContext : ApplicationContext
                     }
                     else needKey = true;
 
-                    string answer = null; int sent = 0;
+                    string answer = null; int sent = 0; bool tried = false;
+                    DateTime t0 = DateTime.UtcNow;
                     if (needKey)
                     {
-                        byte[] jpeg = Capture.EncodeJpeg(bmp, new Rectangle(0, 0, w, h), 60);
-                        answer = server.PostFrame(t, jpeg, w, h, false); sent = jpeg.Length;
-                        if (answer != null) { differ.Store(bmp); lastKey = DateTime.UtcNow; needKey = false; keysSent++; }
+                        bool png; byte[] img = Capture.EncodeBest(bmp, new Rectangle(0, 0, w, h), quality, out png);
+                        tried = true; answer = server.PostFrame(t, img, w, h, false); sent = img.Length;
+                        if (answer != null) { differ.Store(bmp); lastKey = DateTime.UtcNow; needKey = false; keysSent++; if (png) pngN++; else jpgN++; }
                     }
                     else if (rects != null)
                     {
                         byte[] bundle = Bundle(bmp, rects);
-                        answer = server.PostFrame(t, bundle, w, h, true); sent = bundle.Length;
+                        tried = true; answer = server.PostFrame(t, bundle, w, h, true); sent = bundle.Length;
                         if (answer != null) patchesSent++;
                     }
-                    if (answer == null && (needKey || rects != null)) needKey = true; // 보내지 못했으면 다음에 전체 화면으로 다시 맞춘다
-                    if (answer == "key" || answer == "idle") needKey = true;
-                    if (answer == "ok" || answer == "key") { framesSent++; lastKb = Math.Max(1, sent / 1024); }
+                    if (tried)
+                    {
+                        double ms = (DateTime.UtcNow - t0).TotalMilliseconds;
+                        ema = ema == 0 ? ms : ema * 0.6 + ms * 0.4;
+                        string verdict = answer == null ? null : answer.Split(' ')[0];
+                        bool slow = answer != null && answer.EndsWith(" slow");
+                        if (answer == null || verdict == "key" || verdict == "idle") needKey = true; // 보내지 못했거나 서버가 전체 화면을 원함
+                        if (verdict == "ok" || verdict == "key") { framesSent++; lastKb = Math.Max(1, sent / 1024); }
+                        // 자동 조절: 느리면 품질·빈도를 내리고, 여유가 있으면 서서히 올린다
+                        if (slow || ema > 700 || answer == null) { quality = Math.Max(minQ, quality - 10); interval = Math.Min(600, interval + 80); }
+                        else if (ema < 250) { quality = Math.Min(maxQ, quality + 4); interval = Math.Max(minInt, interval - 20); }
+                        lastMs = (int)ema;
+                    }
+                    if ((DateTime.UtcNow - lastStats).TotalMilliseconds > 2000) { lastStats = DateTime.UtcNow; ReportStats(t, w); }
                 }
             }
             catch (Exception) { needKey = true; Thread.Sleep(500); }
-            int wait = intervalMs - (int)(DateTime.UtcNow - start).TotalMilliseconds;
+            int wait = interval - (int)(DateTime.UtcNow - start).TotalMilliseconds;
             if (wait > 0) Thread.Sleep(wait);
         }
+    }
+
+    volatile int lastMs;
+    // 현재 화질 등을 서버에 알린다 (보는 화면의 표시용)
+    void ReportStats(string t, int w)
+    {
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        d["mode"] = profile; d["q"] = quality; d["ms"] = lastMs; d["interval"] = interval; d["png"] = pngN; d["jpg"] = jpgN; d["w"] = w;
+        ThreadPool.QueueUserWorkItem(delegate { try { server.PostJson("/api/remote/agent/stats?token=" + Uri.EscapeDataString(t), d); } catch (Exception) { } });
     }
 
     const int KeyAreaPercent = 60; // 바뀐 면적이 화면의 이 비율 이상이면 키 프레임
@@ -796,15 +886,16 @@ class AgentContext : ApplicationContext
         return u;
     }
 
-    // 조각 묶음: u8 개수 | 개수 × { u16 x, y, w, h, u32 길이, 이미지 } (큰 값부터)
-    static byte[] Bundle(Bitmap bmp, List<Rectangle> rects)
+    // 조각 묶음: u8 개수 | 개수 × { u16 x, y, w, h, u32 길이, 이미지(JPEG 또는 PNG 중 작은 것) } (큰 값부터)
+    byte[] Bundle(Bitmap bmp, List<Rectangle> rects)
     {
         using (MemoryStream ms = new MemoryStream())
         {
             ms.WriteByte((byte)rects.Count);
             foreach (Rectangle r in rects)
             {
-                byte[] img = Capture.EncodeJpeg(bmp, r, 60);
+                bool png; byte[] img = Capture.EncodeBest(bmp, r, quality, out png);
+                if (png) pngN++; else jpgN++;
                 U16(ms, r.X); U16(ms, r.Y); U16(ms, r.Width); U16(ms, r.Height);
                 ms.WriteByte((byte)(img.Length >> 24)); ms.WriteByte((byte)(img.Length >> 16)); ms.WriteByte((byte)(img.Length >> 8)); ms.WriteByte((byte)img.Length);
                 ms.Write(img, 0, img.Length);

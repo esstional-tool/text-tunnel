@@ -118,7 +118,7 @@ async function startAgent({ pin = PIN, cfg, withCode = true } = {}) {
 
     // 보는 쪽이 받는 신호: agent(온라인)·auth(판정)·frame — 접속 알림 같은 새 종류는 없음
     const kinds = [...new Set(v.lv.events.map((e) => e.type))].sort().join(',');
-    ok(kinds === 'agent,auth,control,frame', `보는 쪽이 받는 신호는 agent·auth·control(자기 조종 상태)·frame 뿐 — 접속 알림이 보는 쪽으로 가지 않음 (받은 종류: ${kinds})`);
+    ok(kinds === 'agent,auth,control,frame' || kinds === 'agent,auth,control,frame,stats', `보는 쪽이 받는 신호는 agent·auth·control(자기 조종 상태)·frame 뿐 — 접속 알림이 보는 쪽으로 가지 않음 (받은 종류: ${kinds}; stats 는 화질 표시용 상태일 뿐 접속 알림이 아님)`);
 
     const f = await fetch(`${B}/api/remote/frame?token=${v.token}`);
     const buf = Buffer.from(await f.arrayBuffer());

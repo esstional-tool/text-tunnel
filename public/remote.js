@@ -35,6 +35,8 @@
         if (R.authed) { setStatus(`${m.name || '노트북'} 화면을 받는 중…`, 'on'); return; }
         // 에이전트가 (다시) 켜졌다 — PIN 이 바뀌었을 수 있어 다시 인증해야 한다. 방금 쓴 PIN 이 있으면 한 번만 자동으로 다시 넣는다
         if (R.pin) { const p = R.pin; R.pin = null; submitPin(p); } else askPin();
+      } else if (m.type === 'stats') {
+        showInfo(m);
       } else if (m.type === 'control') {
         setControlState(m.allowed, m.on);
       } else if (m.type === 'auth') {
@@ -71,7 +73,7 @@
   }
   function onAuth(m) {
     if (m.ok) {
-      R.authed = true; R.pin = R.tryPin; updateCtlButton(); // 연결이 끊겼다 돌아올 때 자동으로 다시 넣기 위해
+      R.authed = true; R.pin = R.tryPin; updateCtlButton(); sendProfile(); // 연결이 끊겼다 돌아올 때 자동으로 다시 넣기 위해
       $r('pinForm').hidden = true; $r('pinInput').value = '';
       setStatus(`${R.name || '노트북'} 화면을 받는 중…`, 'on');
       return;
@@ -84,6 +86,17 @@
     }
     if (m.code === 'wrong') return askPin(`PIN 이 맞지 않아요 (남은 횟수 ${m.left}번)`);
     askPin(m.error || '확인하지 못했어요');
+  }
+
+  // ── 화질·속도 (이슈 #25) ───────────────────────────────
+  // 프로필(자동/화질 우선/속도 우선)은 원격 PC 의 에이전트가 허용 범위 안에서 따른다. 아래 줄에는 에이전트가 알려 준 현재 상태가 보인다
+  const PROFILE_LABEL = { auto: '자동', quality: '화질 우선', speed: '속도 우선' };
+  function sendProfile() {
+    if (!R.token) return;
+    fetch(`/api/remote/view/profile?token=${encodeURIComponent(R.token)}`, { method: 'POST', body: JSON.stringify({ mode: $r('remoteProfile').value }) }).catch(() => {});
+  }
+  function showInfo(m) {
+    $r('remoteInfo').textContent = `${PROFILE_LABEL[m.mode] || m.mode} · 화질 ${m.q} · 전송 ${m.ms}ms · 간격 ${m.interval}ms · PNG ${m.png} / JPEG ${m.jpg} 조각 · ${m.w}px`;
   }
 
   // ── 조종 (이슈 #23) ─────────────────────────────────────
@@ -143,6 +156,7 @@
   }
   function updateCtlButton() {
     const b = $r('remoteCtl');
+    $r('remoteProfile').hidden = !R.authed;
     b.hidden = !R.authed;
     b.disabled = !R.ctlAllowed;
     b.classList.toggle('on', R.ctl);
@@ -181,6 +195,7 @@
       R.keys.clear(); R.held.clear();
     }); // 포커스를 잃으면 눌린 키를 모두 뗀다
     $r('remoteCtl').onclick = toggleControl;
+    $r('remoteProfile').onchange = sendProfile;
   }
 
   // 바뀐 부분 가져오기 (이슈 #24): "내가 마지막으로 그린 번호(since)" 이후의 조각들을 한 번에 받아 캔버스에 순서대로 덧그린다.
@@ -230,7 +245,7 @@
     $r('remoteStats').textContent = `초당 ${fps.toFixed(1)}번 갱신 · 한 번 평균 ${kb < 10 ? kb.toFixed(1) : Math.round(kb)}KB · 받는 데 ${Math.round(lat)}ms · ${Math.round(total)}KB/s · 조각 ${R.stats[n - 1].rects}개`;
   }
 
-  function clearCanvas() { const c = $r('remoteCanvas'); c.getContext('2d').clearRect(0, 0, c.width, c.height); $r('remoteStats').textContent = ''; }
+  function clearCanvas() { $r('remoteInfo').textContent = ''; const c = $r('remoteCanvas'); c.getContext('2d').clearRect(0, 0, c.width, c.height); $r('remoteStats').textContent = ''; }
 
   function close() {
     R.es?.close(); R.es = null;

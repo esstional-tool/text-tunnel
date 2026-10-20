@@ -32,7 +32,8 @@ function parse(buf) {
   for (let i = 0; i < n; i++) { const len = buf.readUInt32BE(o + 8); out.rects.push({ x: buf.readUInt16BE(o), y: buf.readUInt16BE(o + 2), w: buf.readUInt16BE(o + 4), h: buf.readUInt16BE(o + 6), buf: buf.subarray(o + 12, o + 12 + len) }); o += 12 + len; }
   return out;
 }
-function jpegSize(b) {
+function jpegSize(b) { // JPEG 또는 PNG(단순한 화면은 PNG 가 더 작아 PNG 로 옴 — 이슈 #25)의 가로·세로
+  if (b[0] === 0x89 && b[1] === 0x50) return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
   let i = 2;
   while (i < b.length) { if (b[i] !== 0xff) { i++; continue; } const m = b[i + 1]; if (m >= 0xc0 && m <= 0xc3) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }; i += 2 + b.readUInt16BE(i + 2); }
   return null;
@@ -73,7 +74,7 @@ async function viewer(key) {
     let g = await v.since(0);
     ok(g.rects?.length === 1 && g.rects[0].x === 0 && g.rects[0].y === 0 && g.rects[0].w === 1280 && g.rects[0].h === 720, '첫 화면은 전체 화면 한 장 (키 프레임)');
     const keyBytes = g.rects[0].buf.length;
-    ok(jpegSize(g.rects[0].buf)?.w === 1280 && jpegSize(g.rects[0].buf)?.h === 720, `키 프레임은 올바른 JPEG (${Math.round(keyBytes / 1024)}KB, 1280x720)`);
+    ok(jpegSize(g.rects[0].buf)?.w === 1280 && jpegSize(g.rects[0].buf)?.h === 720, `키 프레임은 올바른 이미지 (${Math.round(keyBytes / 1024)}KB, 1280x720)`);
     let last = v.seq();
 
     // 2) 바뀐 게 없으면 아무것도 보내지 않는다

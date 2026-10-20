@@ -95,6 +95,7 @@
         <strong>원격 화면</strong>
         <span class="status"><span id="remoteDot" class="dot"></span><span id="remoteStatus">연결 중…</span></span>
       </div>
+      <select id="remoteProfile" class="remote-profile" aria-label="화질·속도" hidden><option value="auto">자동</option><option value="quality">화질 우선</option><option value="speed">속도 우선</option></select>
       <button id="remoteCtl" class="remote-ctl" type="button" hidden>조종 켜기</button>
     </header>
     <div class="remote-stage">
@@ -112,6 +113,7 @@
       </div>
     </div>
     <p id="remoteStats" class="remote-stats tabular"></p>
+    <p id="remoteInfo" class="remote-info tabular"></p>
   </section>
 
   <!-- PC: 방문 기록 지우기 확장 프로그램 -->
