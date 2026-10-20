@@ -570,7 +570,8 @@ let ext = null;
 const toExt = (m) => window.postMessage({ source: 'tt-app', ...m }, location.origin);
 addEventListener('message', (e) => {
   if (e.source !== window || e.data?.source !== 'tt-ext') return;
-  ext = e.data;
+  if (e.data.type === 'wipe') { wipeHere().then(() => toExt({ type: 'wiped' })); return; }
+  ext = { ...ext, ...e.data };
   if (e.data.type === 'cleaned') {
     $('extClean').disabled = false;
     $('extResult').textContent = e.data.error ? `지우지 못했어요: ${e.data.error}` : `방문 기록 ${e.data.count}개와 캐시를 지웠어요`;
@@ -581,7 +582,27 @@ addEventListener('message', (e) => {
 function renderExt() {
   $('extOn').hidden = !ext;
   $('extOff').hidden = !!ext;
-  if (ext) { $('extVer').textContent = `v${ext.version}`; $('extAuto').checked = ext.auto !== false; }
+  if (ext) {
+    $('extVer').textContent = `v${ext.version}`;
+    $('extAuto').checked = ext.auto !== false;
+    $('extKey').textContent = ext.shortcut || '단축키 없음';
+    // 1.0 확장은 완전 정리를 모른다
+    $('extWipe').disabled = !ext.shortcut && ext.version === '1.0.0';
+  }
+}
+
+// 단축키(확장)로 완전 정리할 때 페이지가 먼저 하는 일: 양쪽 대화·서버 파일 지우기, 방 나가기, 이 기기 연결 정보 삭제.
+// 그다음 확장이 창을 닫고 사이트 데이터·캐시·방문 기록을 지운다
+async function wipeHere() {
+  if (token && !DEMO) {
+    await Promise.race([fetch(api('clear'), { method: 'POST' }).catch(() => null), new Promise((ok) => setTimeout(ok, 800))]);
+    leaveNow();
+  }
+  try { for (const k of Object.keys(localStorage)) if (k.startsWith('tt.')) localStorage.removeItem(k); } catch {}
+  try { sessionStorage.clear(); } catch {}
+  key = null;
+  clearList(); clearTray(); closeAttach(); closeSheets();
+  show('welcome');
 }
 
 function openExt() {
@@ -706,6 +727,7 @@ $('extCopy').onclick = () => copy($('extUrl').textContent, '복사했어요. 새
 $('extReload').onclick = () => { try { sessionStorage.setItem('tt.openExt', '1'); } catch {} location.reload(); };
 $('extClean').onclick = () => { $('extClean').disabled = true; $('extResult').textContent = '지우는 중…'; toExt({ type: 'clean' }); };
 $('extAuto').onchange = (e) => toExt({ type: 'auto', on: e.target.checked });
+$('extWipe').onclick = () => askConfirm('완전 정리할까요?', '양쪽 대화·서버 파일을 지우고, 연결을 해제하고, 이 사이트의 데이터·캐시·방문 기록을 지운 뒤 앱을 닫아요. 다시 쓰려면 QR로 새로 연결해야 해요.', '완전 정리', () => { closeSheets(); toExt({ type: 'wipe' }); });
 $('mUnpair').onclick = () => askConfirm('연결을 해제할까요?', '이 기기에서 연결 정보가 지워져요. 다시 쓰려면 QR로 새로 연결해야 해요.', '연결 해제', unpair);
 $('mClear').onclick = () => askConfirm('대화를 지울까요?', '양쪽 화면의 대화와 서버에 남은 사진·파일을 바로 지워요. 되돌릴 수 없어요.', '대화 지우기', clearChat);
 $('mClose').onclick = closeSheets;
