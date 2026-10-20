@@ -9,7 +9,8 @@ DB 없이 내 PC와 휴대폰을 한 번 짝지어 두고, 앱만 열면 텍스�
 |---|---|
 | [docs/WORKLOG.md](docs/WORKLOG.md) | 작업 내역 · 결정 이유 · 시험 기록 · 겪은 문제 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 아키텍처 공부 노트 (개념 · 왜 그렇게 · 다른 선택지) |
-| [docs/FLOWS.md](docs/FLOWS.md) | 흐름별 상세 해설 (API 명세 · 짝 맺기 · 업로드 · 확장 연결 단계별) |
+| [docs/FLOWS.md](docs/FLOWS.md) | 흐름별 상세 해설 (API 명세 · 짝 맺기 · 업로드 · 확장 연결 단계별 · 펼쳐 보는 실제 코드) |
+| [docs/STUDY.md](docs/STUDY.md) | 다음 단계 공부 로드맵 (7단계 + 곁가지, 이 코드로 하는 실습 과제·참고 자료) |
 
 ---
 
