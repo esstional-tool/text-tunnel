@@ -1,4 +1,4 @@
-// text-tunnel 원격조종 에이전트 (이슈 #17 화면 보기, #21 PIN, #23 마우스·키보드 조종)
+// text-tunnel 원격조종 에이전트 (이슈 #17 화면 보기, #21 PIN, #23 마우스·키보드 조종, #24 바뀐 부분만 보내기)
 // 조종당하는 PC 에서 도는 작은 프로그램. 메신저와 같은 짝 열쇠를 가진 브라우저가 들어오면 화면을 JPEG 로 보낸다.
 //
 //   처음 한 번:  remote-agent.exe --code ABC123            (메신저 앱 메뉴 → 새 기기 연결 의 코드)
@@ -13,6 +13,7 @@
 //   · 누군가 화면을 보는 동안 화면 맨 위에 빨간 "원격 접속 중" 띠가 항상 떠 있음 (끌 수 없음, 1초마다 다시 맨 위로)
 //   · 보기 시작하는 순간 토스트 + 소리, 끝나면 토스트 — 이 PC 앞에 있는 사람에게만 (보는 쪽에는 알림 없음)
 //   · 보는 사람이 없으면 화면을 찍지도 보내지도 않음
+//   · 화면은 64x64 칸으로 나눠 이전 화면과 비교하고, 바뀐 곳만 조각으로 보냄 (바뀐 게 없으면 아무것도 안 보냄). 처음·큰 변화·10초마다·서버 요청 시에는 전체 화면(키 프레임)
 //   · 같은 짝 열쇠를 가진 기기가 **이 PC 의 주인이 정한 PIN** 까지 맞춰야 볼 수 있음 (PIN 은 이 PC 에만 해시로 저장, 5번 틀리면 10분 잠금)
 //   · 조종(마우스·키보드)은 보기와 별개: 이 PC 의 주인이 "원격 조종 허용"을 켜야 하고(기본 꺼짐), 보는 사람이 또 "조종 켜기"를 눌러야 함.
 //     조종 중에는 띠가 "원격 조종 중"으로 바뀜. 즉시 중지: 전역 단축키 Ctrl+Alt+F12 또는 트레이 "조종 즉시 중지" → 조종 허용이 꺼지고 눌려 있던 키·버튼도 모두 뗌
@@ -44,6 +45,8 @@ static class Native
     [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint type);
     [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint mods, uint vk);
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    [DllImport("msvcrt.dll", CallingConvention = CallingConvention.Cdecl)] public static extern int memcmp(IntPtr a, IntPtr b, UIntPtr count);
+    [DllImport("kernel32.dll", EntryPoint = "RtlMoveMemory")] public static extern void CopyMemory(IntPtr dst, IntPtr src, UIntPtr count);
 }
 
 static class Json
@@ -78,13 +81,14 @@ class Server
             return Json.Read(sr.ReadToEnd());
     }
 
-    public bool PostFrame(string token, byte[] jpeg, int w, int h)
+    // 키 프레임(이미지 한 장) 또는 조각 묶음을 올린다. 서버의 답: "ok" | "key"(다음에 키 프레임을 보내 줘) | "idle"(보는 사람이 없음) | null(실패)
+    public string PostFrame(string token, byte[] body, int w, int h, bool patch)
     {
-        HttpWebRequest r = Req("/api/remote/frame?token=" + Uri.EscapeDataString(token) + "&w=" + w + "&h=" + h, "POST", 10000);
-        r.ContentType = "image/jpeg"; r.ContentLength = jpeg.Length;
-        using (Stream s = r.GetRequestStream()) s.Write(jpeg, 0, jpeg.Length);
+        HttpWebRequest r = Req("/api/remote/frame?token=" + Uri.EscapeDataString(token) + "&w=" + w + "&h=" + h + (patch ? "&kind=patch" : ""), "POST", 10000);
+        r.ContentType = patch ? "application/x-tt-patch" : "image/jpeg"; r.ContentLength = body.Length;
+        using (Stream s = r.GetRequestStream()) s.Write(body, 0, body.Length);
         using (HttpWebResponse resp = (HttpWebResponse)r.GetResponse())
-        using (StreamReader sr = new StreamReader(resp.GetResponseStream())) return sr.ReadToEnd() == "ok";
+        using (StreamReader sr = new StreamReader(resp.GetResponseStream())) return sr.ReadToEnd();
     }
 
     public void Leave(string token)
@@ -127,35 +131,141 @@ static class Capture
         throw new InvalidOperationException("JPEG 인코더가 없어요");
     }
 
-    // 주 모니터를 찍어 가로 maxWidth 이하로 줄이고 JPEG(quality) 로 인코딩한다
-    public static byte[] Grab(int maxWidth, long quality, out int w, out int h)
+    // 시험용: --fake-screen <폴더> 이면 이 PC 의 실제 화면 대신, 폴더의 fake-screen.txt 로 그린 합성 화면을 쓴다 (실제 화면 내용을 읽지 않고 바뀐 영역을 정확히 조절하려고)
+    //   형식:  size 1280 720  /  rect x y w h r g b  (줄마다. 기본 바탕은 가로 띠 무늬)
+    public static string FakeDir;
+
+    // 주 모니터를 찍어 가로 maxWidth 이하로 줄인 24비트 비트맵을 돌려준다 (부른 쪽이 Dispose)
+    public static Bitmap Snap(int maxWidth, out int w, out int h)
     {
+        if (FakeDir != null) return Fake(out w, out h);
         Rectangle b = Screen.PrimaryScreen.Bounds;
+        double scale = b.Width > maxWidth ? (double)maxWidth / b.Width : 1.0;
+        w = (int)(b.Width * scale); h = (int)(b.Height * scale);
         using (Bitmap full = new Bitmap(b.Width, b.Height, PixelFormat.Format24bppRgb))
         {
             using (Graphics g = Graphics.FromImage(full)) g.CopyFromScreen(b.Location, Point.Empty, b.Size);
-            double scale = b.Width > maxWidth ? (double)maxWidth / b.Width : 1.0;
-            w = (int)(b.Width * scale); h = (int)(b.Height * scale);
-            Bitmap src = full;
-            Bitmap small = null;
-            try
+            if (scale >= 1.0) return (Bitmap)full.Clone();
+            Bitmap small = new Bitmap(w, h, PixelFormat.Format24bppRgb);
+            using (Graphics g2 = Graphics.FromImage(small)) { g2.InterpolationMode = InterpolationMode.Bilinear; g2.DrawImage(full, 0, 0, w, h); }
+            return small;
+        }
+    }
+
+    static Bitmap Fake(out int w, out int h)
+    {
+        w = 1280; h = 720;
+        List<int[]> rects = new List<int[]>();
+        try
+        {
+            foreach (string line in File.ReadAllLines(Path.Combine(FakeDir, "fake-screen.txt")))
             {
-                if (scale < 1.0)
+                string[] p = line.Trim().Split(' ');
+                if (p[0] == "size" && p.Length >= 3) { w = Convert.ToInt32(p[1]); h = Convert.ToInt32(p[2]); }
+                else if (p[0] == "rect" && p.Length >= 8) { int[] r = new int[7]; for (int i = 0; i < 7; i++) r[i] = Convert.ToInt32(p[i + 1]); rects.Add(r); }
+            }
+        }
+        catch (Exception) { }
+        Bitmap bmp = new Bitmap(w, h, PixelFormat.Format24bppRgb);
+        using (Graphics g = Graphics.FromImage(bmp))
+        {
+            g.Clear(Color.FromArgb(28, 30, 54));
+            for (int y = 0; y < h; y += 80) using (SolidBrush br = new SolidBrush(Color.FromArgb(40, 44, 80))) g.FillRectangle(br, 0, y, w, 40);
+            foreach (int[] r in rects) using (SolidBrush br = new SolidBrush(Color.FromArgb(r[4], r[5], r[6]))) g.FillRectangle(br, r[0], r[1], r[2], r[3]);
+        }
+        return bmp;
+    }
+
+    // 비트맵의 한 영역을 JPEG 로 인코딩
+    public static byte[] EncodeJpeg(Bitmap src, Rectangle r, long quality)
+    {
+        using (Bitmap part = (r.Width == src.Width && r.Height == src.Height) ? (Bitmap)src.Clone() : src.Clone(r, PixelFormat.Format24bppRgb))
+        using (MemoryStream ms = new MemoryStream())
+        using (EncoderParameters ep = new EncoderParameters(1))
+        {
+            ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
+            part.Save(ms, JpegCodec, ep);
+            return ms.ToArray();
+        }
+    }
+}
+
+// 이전에 보낸 화면과 비교해 바뀐 칸을 찾는다 (이슈 #24). 이전 화면은 이 프로그램 메모리(비관리 버퍼)에만 둔다.
+// 칸 단위(64x64)로 memcmp 비교 → 같은 줄의 연속 칸을 한 사각형으로, 위아래로 같은 가로 범위면 합침
+class Differ
+{
+    public const int Tile = 64;
+    IntPtr prev = IntPtr.Zero; int pw, ph, pstride;
+    public bool Has { get { return prev != IntPtr.Zero; } }
+    public int Width { get { return pw; } }
+    public int Height { get { return ph; } }
+
+    public void Reset() { if (prev != IntPtr.Zero) { Marshal.FreeHGlobal(prev); prev = IntPtr.Zero; } }
+
+    // 지금 화면을 "이전 화면" 으로 저장한다
+    public void Store(Bitmap bmp)
+    {
+        BitmapData d = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        try
+        {
+            if (prev == IntPtr.Zero || pw != bmp.Width || ph != bmp.Height || pstride != d.Stride)
+            {
+                Reset(); pw = bmp.Width; ph = bmp.Height; pstride = d.Stride; prev = Marshal.AllocHGlobal(pstride * ph);
+            }
+            Native.CopyMemory(prev, d.Scan0, (UIntPtr)(uint)(pstride * ph));
+        }
+        finally { bmp.UnlockBits(d); }
+    }
+
+    // 이전 화면과 비교해 바뀐 사각형 목록을 돌려주고, 지금 화면을 이전 화면으로 갱신한다. 크기가 다르면 null (키 프레임을 보내야 함)
+    public List<Rectangle> Diff(Bitmap bmp, out long changedPixels)
+    {
+        changedPixels = 0;
+        if (prev == IntPtr.Zero || bmp.Width != pw || bmp.Height != ph) return null;
+        List<Rectangle> rects = new List<Rectangle>();
+        BitmapData d = bmp.LockBits(new Rectangle(0, 0, pw, ph), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        try
+        {
+            if (d.Stride != pstride) return null;
+            int tx = (pw + Tile - 1) / Tile, ty = (ph + Tile - 1) / Tile;
+            for (int j = 0; j < ty; j++)
+            {
+                int y0 = j * Tile, th = Math.Min(Tile, ph - y0);
+                int runStart = -1;
+                for (int i = 0; i <= tx; i++)
                 {
-                    small = new Bitmap(w, h, PixelFormat.Format24bppRgb);
-                    using (Graphics g2 = Graphics.FromImage(small)) { g2.InterpolationMode = InterpolationMode.Bilinear; g2.DrawImage(full, 0, 0, w, h); }
-                    src = small;
-                }
-                using (MemoryStream ms = new MemoryStream())
-                using (EncoderParameters ep = new EncoderParameters(1))
-                {
-                    ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
-                    src.Save(ms, JpegCodec, ep);
-                    return ms.ToArray();
+                    bool changed = false;
+                    if (i < tx)
+                    {
+                        int x0 = i * Tile, tw = Math.Min(Tile, pw - x0);
+                        for (int r = 0; r < th && !changed; r++)
+                        {
+                            int off = (y0 + r) * pstride + x0 * 3;
+                            changed = Native.memcmp((IntPtr)(d.Scan0.ToInt64() + off), (IntPtr)(prev.ToInt64() + off), (UIntPtr)(uint)(tw * 3)) != 0;
+                        }
+                    }
+                    if (changed && runStart < 0) runStart = i;
+                    if (!changed && runStart >= 0)
+                    {
+                        int x0 = runStart * Tile, x1 = Math.Min(pw, i * Tile);
+                        rects.Add(new Rectangle(x0, y0, x1 - x0, th));
+                        runStart = -1;
+                    }
                 }
             }
-            finally { if (small != null) small.Dispose(); }
+            // 위아래로 가로 범위가 같고 맞닿아 있으면 하나로 합침
+            for (int a = 0; a < rects.Count; a++)
+                for (int b = a + 1; b < rects.Count; b++)
+                    if (rects[b].X == rects[a].X && rects[b].Width == rects[a].Width && rects[b].Y == rects[a].Bottom)
+                    {
+                        rects[a] = new Rectangle(rects[a].X, rects[a].Y, rects[a].Width, rects[a].Height + rects[b].Height);
+                        rects.RemoveAt(b); b = a; // 합쳐졌으니 처음부터 다시 찾는다
+                    }
+            foreach (Rectangle r in rects) changedPixels += (long)r.Width * r.Height;
+            if (rects.Count > 0) Native.CopyMemory(prev, d.Scan0, (UIntPtr)(uint)(pstride * ph));
         }
+        finally { bmp.UnlockBits(d); }
+        return rects;
     }
 }
 
@@ -473,7 +583,7 @@ class AgentContext : ApplicationContext
             : (!PinStore.Exists(dir) ? "PIN 을 정해야 볼 수 있어요"
             : (DateTime.UtcNow < lockedUntil ? "PIN 을 너무 많이 틀려 잠겨 있어요"
             : (viewers > 0 ? "보는 중: " + viewers + "명" : "켜짐 — 대기 중")));
-        fpsInfo.Text = framesSent > 0 ? "보낸 화면 " + framesSent + "장 (마지막 " + lastKb + "KB)" : "아직 보낸 화면 없음";
+        fpsInfo.Text = framesSent > 0 ? "보낸 것: 전체 " + keysSent + " · 조각 " + patchesSent + " (마지막 " + lastKb + "KB)" : "아직 보낸 화면 없음";
         tray.Text = "text-tunnel 원격: " + (!on ? "꺼짐" : (viewers > 0 ? "보는 중 " + viewers + "명" : "대기 중"));
         bool show = on && viewers > 0;
         if (show != banner.Visible) { if (show) banner.Show(); else banner.Hide(); }
@@ -622,26 +732,87 @@ class AgentContext : ApplicationContext
         }
     }
 
-    // 보는 사람이 있을 때만 화면을 찍어 보낸다. 한 장을 다 보낸 뒤에 다음 장을 찍는다 → 네트워크가 느리면 저절로 프레임이 줄어든다
+    // 보는 사람이 있을 때만 화면을 찍는다. 이전에 보낸 화면과 비교해 바뀐 조각만 보낸다 (이슈 #24).
+    // 키 프레임(전체 화면)을 보내는 경우: 처음 · 보는 사람이 없다가 생김 · 화면 크기 변화 · 바뀐 면적이 큼 · 10초마다 · 서버가 요청('key') · 전송 실패
+    // 한 장을 다 보낸 뒤에 다음 장을 찍는다 → 네트워크가 느리면 저절로 프레임이 줄어든다
     void CaptureLoop()
     {
-        const int intervalMs = 200; // 목표 초당 5장
+        const int intervalMs = 200;   // 목표 초당 5번 확인
+        const int keyEveryMs = 10000; // 오래 조각만 쌓이지 않게 가끔 전체 화면
+        Differ differ = new Differ();
+        bool needKey = true; DateTime lastKey = DateTime.MinValue;
         while (!quit)
         {
             string t = token;
-            if (!on || viewers == 0 || t == null) { Thread.Sleep(150); continue; }
+            if (!on || viewers == 0 || t == null) { differ.Reset(); needKey = true; Thread.Sleep(150); continue; }
             DateTime start = DateTime.UtcNow;
             try
             {
                 int w, h;
-                byte[] jpeg = Capture.Grab(1280, 60, out w, out h);
-                if (server.PostFrame(t, jpeg, w, h)) { framesSent++; lastKb = jpeg.Length / 1024; }
+                using (Bitmap bmp = Capture.Snap(1280, out w, out h))
+                {
+                    List<Rectangle> rects = null; long changed = 0;
+                    if (!needKey && (DateTime.UtcNow - lastKey).TotalMilliseconds < keyEveryMs)
+                    {
+                        rects = differ.Diff(bmp, out changed);
+                        if (rects == null) needKey = true;                      // 화면 크기가 바뀜
+                        else if (rects.Count == 0) rects = null;                 // 바뀐 게 없음 → 아무것도 보내지 않음
+                        else if (changed * 100 > (long)w * h * KeyAreaPercent) needKey = true; // 대부분이 바뀜 → 전체 화면이 더 쌈
+                        else if (rects.Count > 12) rects = new List<Rectangle>(new Rectangle[] { Union(rects) }); // 조각이 너무 많으면 큰 사각형 하나로
+                    }
+                    else needKey = true;
+
+                    string answer = null; int sent = 0;
+                    if (needKey)
+                    {
+                        byte[] jpeg = Capture.EncodeJpeg(bmp, new Rectangle(0, 0, w, h), 60);
+                        answer = server.PostFrame(t, jpeg, w, h, false); sent = jpeg.Length;
+                        if (answer != null) { differ.Store(bmp); lastKey = DateTime.UtcNow; needKey = false; keysSent++; }
+                    }
+                    else if (rects != null)
+                    {
+                        byte[] bundle = Bundle(bmp, rects);
+                        answer = server.PostFrame(t, bundle, w, h, true); sent = bundle.Length;
+                        if (answer != null) patchesSent++;
+                    }
+                    if (answer == null && (needKey || rects != null)) needKey = true; // 보내지 못했으면 다음에 전체 화면으로 다시 맞춘다
+                    if (answer == "key" || answer == "idle") needKey = true;
+                    if (answer == "ok" || answer == "key") { framesSent++; lastKb = Math.Max(1, sent / 1024); }
+                }
             }
-            catch (Exception) { Thread.Sleep(500); }
+            catch (Exception) { needKey = true; Thread.Sleep(500); }
             int wait = intervalMs - (int)(DateTime.UtcNow - start).TotalMilliseconds;
             if (wait > 0) Thread.Sleep(wait);
         }
     }
+
+    const int KeyAreaPercent = 60; // 바뀐 면적이 화면의 이 비율 이상이면 키 프레임
+    volatile int keysSent, patchesSent;
+
+    static Rectangle Union(List<Rectangle> rs)
+    {
+        Rectangle u = rs[0];
+        for (int i = 1; i < rs.Count; i++) u = Rectangle.Union(u, rs[i]);
+        return u;
+    }
+
+    // 조각 묶음: u8 개수 | 개수 × { u16 x, y, w, h, u32 길이, 이미지 } (큰 값부터)
+    static byte[] Bundle(Bitmap bmp, List<Rectangle> rects)
+    {
+        using (MemoryStream ms = new MemoryStream())
+        {
+            ms.WriteByte((byte)rects.Count);
+            foreach (Rectangle r in rects)
+            {
+                byte[] img = Capture.EncodeJpeg(bmp, r, 60);
+                U16(ms, r.X); U16(ms, r.Y); U16(ms, r.Width); U16(ms, r.Height);
+                ms.WriteByte((byte)(img.Length >> 24)); ms.WriteByte((byte)(img.Length >> 16)); ms.WriteByte((byte)(img.Length >> 8)); ms.WriteByte((byte)img.Length);
+                ms.Write(img, 0, img.Length);
+            }
+            return ms.ToArray();
+        }
+    }
+    static void U16(Stream s, int v) { s.WriteByte((byte)(v >> 8)); s.WriteByte((byte)v); }
 }
 
 static class Program
@@ -692,6 +863,7 @@ static class Program
         if (Array.IndexOf(args, "--allow-control") >= 0) { File.WriteAllText(AgentContext.ControlFile(dir), "on"); AccessLog.Write("조종 허용을 켰어요 (--allow-control)"); }
         if (Array.IndexOf(args, "--deny-control") >= 0) { if (File.Exists(AgentContext.ControlFile(dir))) File.Delete(AgentContext.ControlFile(dir)); AccessLog.Write("조종 허용을 껐어요 (--deny-control)"); }
         Inject.Sink = Arg(args, "--input-sink"); // 시험용
+        Capture.FakeDir = Arg(args, "--fake-screen"); // 시험용: 실제 화면 대신 합성 화면 (폴더의 fake-screen.txt)
         string setPin = Arg(args, "--set-pin");
         if (setPin != null)
         {

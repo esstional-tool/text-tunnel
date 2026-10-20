@@ -23,10 +23,21 @@ async function cdp(wsUrl) {
 (async () => {
   const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-agent-'));
   const sink = path.join(cfg, 'sink.log'); // 에이전트가 실제 입력 대신 기록하는 파일 (이 시험은 이 PC 의 마우스·키보드를 건드리지 않는다)
+  // 실제 화면 대신 합성 화면(--fake-screen)을 쓴다: 바뀌는 곳을 정확히 정할 수 있고, 이 PC 의 화면 내용을 읽지 않는다
+  const fake = (...rects) => {
+    const f = path.join(cfg, 'fs.tmp');
+    fs.writeFileSync(f, ['size 1280 720', ...rects.map((r) => 'rect ' + r.join(' '))].join('\n'));
+    for (let i = 0; i < 10; i++) { try { fs.renameSync(f, path.join(cfg, 'fake-screen.txt')); return; } catch {} }
+  };
+  let anim = null, step = 0;
+  const startAnim = () => { anim = setInterval(() => fake([40 + (step++ % 20) * 50, 100, 60, 60, 255, 120, 0]), 250); };
+  const stopAnim = () => { clearInterval(anim); anim = null; };
+  fake();
   const sinkLines = () => (fs.existsSync(sink) ? fs.readFileSync(sink, 'utf8').split('\n').filter(Boolean) : []);
   let agent;
   try {
     const { key } = await post('pair/start', {});
+    startAnim();
     // PC 앱: 메신저 짝 열쇠가 저장된 상태로 연다
     const t = await (await fetch(`${D}/json/new?${encodeURIComponent(B + '/')}`, { method: 'PUT' })).json();
     let tab = await cdp(t.webSocketDebuggerUrl);
@@ -44,7 +55,7 @@ async function cdp(wsUrl) {
 
     // 에이전트를 켠다 (짝 코드는 메신저 "새 기기 연결" 과 같은 방식)
     const { code } = await post('pair/start', { key });
-    agent = spawn(EXE, ['--server', B, '--code', code, '--config', cfg, '--set-pin', PIN, '--quiet', '--allow-control', '--input-sink', sink], { stdio: 'ignore' }); // PIN 은 이 PC 의 주인이 에이전트에서 정함
+    agent = spawn(EXE, ['--server', B, '--code', code, '--config', cfg, '--set-pin', PIN, '--quiet', '--allow-control', '--input-sink', sink, '--fake-screen', cfg], { stdio: 'ignore' }); // PIN 은 이 PC 의 주인이 에이전트에서 정함
     await sleep(4000);
     const text = (id) => tab.evaluate(`document.getElementById('${id}').textContent`);
     const hidden = (id) => tab.evaluate(`document.getElementById('${id}').hidden`);
@@ -66,11 +77,22 @@ async function cdp(wsUrl) {
     const dims = await tab.evaluate(`[document.getElementById('remoteCanvas').width, document.getElementById('remoteCanvas').height]`);
     ok(dims[0] === 1280 && dims[1] > 0, `캔버스가 원격 화면 크기로 바뀜 (${dims[0]}x${dims[1]})`);
     const stats = await tab.evaluate(`document.getElementById('remoteStats').textContent`);
-    const fps = Number(/초당 ([\d.]+)장/.exec(stats)?.[1]);
+    const fps = Number(/초당 ([\d.]+)번/.exec(stats)?.[1]);
     ok(fps >= 2, `화면을 받고 있음 — ${stats}`);
     await sleep(1500);
     const stats2 = await tab.evaluate(`document.getElementById('remoteStats').textContent`);
     ok(stats2 && stats2.includes('초당'), '속도 표시가 계속 갱신됨');
+
+    // ── 바뀐 부분만 (이슈 #24): 조각이 캔버스에 올바르게 덧그려지는지 픽셀로 확인
+    stopAnim(); await sleep(800);
+    const px = (x, y) => tab.evaluate(`(() => { const d = document.getElementById('remoteCanvas').getContext('2d').getImageData(${x}, ${y}, 1, 1).data; return [d[0], d[1], d[2]]; })()`);
+    const near = (a, b, tol = 28) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
+    fake([200, 300, 200, 100, 255, 0, 0], [800, 500, 100, 100, 0, 200, 0]); await sleep(1500);
+    ok(near(await px(300, 350), [255, 0, 0]) && near(await px(850, 550), [0, 200, 0]) && near(await px(1000, 60), [28, 30, 54]), `합성 화면의 빨강·초록 사각형과 바탕이 캔버스에 맞게 그려짐: ${JSON.stringify([await px(300, 350), await px(850, 550), await px(1000, 60)])}`);
+    fake([200, 300, 200, 100, 255, 0, 0], [900, 500, 100, 100, 0, 200, 0]); await sleep(1500); // 초록만 옆으로 옮김 → 그 부분만 조각으로 옴
+    ok(near(await px(950, 550), [0, 200, 0]) && near(await px(850, 550), [28, 30, 54]) && near(await px(300, 350), [255, 0, 0]), `일부만 바뀌어도 나머지는 그대로이고 바뀐 곳만 갱신됨 (옛 자리는 바탕으로, 새 자리는 초록, 빨강은 유지)`);
+    ok((await tab.evaluate(`document.getElementById('remoteStats').textContent`)).includes('조각'), '속도 표시에 조각 수가 보임');
+    startAnim();
 
     // ── 조종 (이슈 #23): 단추 → 캔버스 이벤트 → 입력 묶음 → 에이전트 (실제 입력은 sink 파일에 기록)
     const ctl = () => tab.evaluate(`(() => { const b = document.getElementById('remoteCtl'); return { hidden: b.hidden, disabled: b.disabled, text: b.textContent, on: b.classList.contains('on'), stage: document.querySelector('.remote-stage').classList.contains('ctl') }; })()`);
@@ -104,6 +126,7 @@ async function cdp(wsUrl) {
     await fire(`c.dispatchEvent(new MouseEvent('mousedown', { clientX: cx, clientY: cy, button: 0, bubbles: true })); return 1;`); await sleep(500);
     ok(sinkLines().length === n, '끈 뒤에는 입력이 전송되지 않음');
 
+    stopAnim();
     // 에이전트를 끈다
     agent.kill(); await sleep(2500);
     ok((await tab.evaluate(`document.getElementById('remoteStatus').textContent`)).includes('꺼져 있어요'), '에이전트가 꺼지면 "꺼져 있어요"로 바뀜');
@@ -111,7 +134,7 @@ async function cdp(wsUrl) {
 
     // 에이전트를 다시 켠다 (저장된 열쇠·PIN 으로). 새로 켠 에이전트는 이전 인증을 인정하지 않으므로 다시 인증해야 하고,
     // 방금 성공한 PIN 이 이 화면의 메모리에 있으면 한 번만 자동으로 다시 넣는다 (사용자가 또 입력하지 않게)
-    agent = spawn(EXE, ['--server', B, '--config', cfg, '--quiet'], { stdio: 'ignore' });
+    agent = spawn(EXE, ['--server', B, '--config', cfg, '--quiet', '--fake-screen', cfg], { stdio: 'ignore' });
     await sleep(5500);
     const again = await text('remoteStatus');
     ok(again.includes('화면을 받는 중') && (await hidden('pinForm')), `에이전트가 다시 켜지면 방금 쓴 PIN 으로 자동 재인증되어 화면이 다시 옴: "${again}"`);
