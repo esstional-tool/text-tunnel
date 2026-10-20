@@ -16,7 +16,7 @@ $('clean').onclick = async () => {
   $('clean').disabled = true;
   const r = await chrome.runtime.sendMessage({ type: 'clean' });
   $('clean').disabled = false;
-  $('result').textContent = r?.error ? `지우지 못했어요: ${r.error}` : `방문 기록 ${r.count}개와 캐시를 지웠어요`;
+  $('result').textContent = r?.error ? `지우지 못했어요: ${r.error}` : `기록 ${r.count}개, 다운로드 목록 ${r.downloads}개, 캐시를 지웠어요`;
 };
 
 let armed = false;
@@ -24,5 +24,5 @@ $('wipe').onclick = async () => {
   if (!armed) { armed = true; $('wipe').textContent = '한 번 더 누르면 완전 정리'; return; }
   $('wipe').disabled = true;
   const r = await chrome.runtime.sendMessage({ type: 'wipe' });
-  $('result').textContent = r?.error ? `정리하지 못했어요: ${r.error}` : `앱 ${r.closed}개를 닫고 기록 ${r.count}개를 지웠어요`;
+  $('result').textContent = r?.error ? `정리하지 못했어요: ${r.error}` : `앱 ${r.closed}개를 닫고 기록 ${r.count}개, 다운로드 목록 ${r.downloads}개를 지웠어요`;
 };
