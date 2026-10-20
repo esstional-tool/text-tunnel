@@ -87,6 +87,25 @@
     <button id="installSkip" class="link">설치 없이 바로 쓰기</button>
   </section>
 
+  <!-- 원격조종: 다른 PC 화면 보기 (이슈 #17, public/remote.js) -->
+  <section id="remoteScreen" class="remote" hidden>
+    <header>
+      <button id="remoteBack" class="icon-btn" aria-label="메신저로 돌아가기"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="title">
+        <strong>원격 화면</strong>
+        <span class="status"><span id="remoteDot" class="dot"></span><span id="remoteStatus">연결 중…</span></span>
+      </div>
+    </header>
+    <div class="remote-stage">
+      <canvas id="remoteCanvas" width="16" height="9"></canvas>
+      <div id="remoteEmpty" class="remote-empty">
+        <p class="empty-title">원격 PC 가 아직 안 보여요</p>
+        <p class="empty-sub">보고 싶은 PC 에서 에이전트(<code>remote-agent.exe</code>)를 켜 두세요.<br>처음 한 번은 메신저 메뉴 → 새 기기 연결 의 코드로 짝을 맺어요.</p>
+      </div>
+    </div>
+    <p id="remoteStats" class="remote-stats tabular"></p>
+  </section>
+
   <!-- PC: 방문 기록 지우기 확장 프로그램 -->
   <section id="extScreen" class="screen" hidden>
     <button id="extBack" class="link back">‹ 대화로 돌아가기</button>
@@ -209,6 +228,7 @@
       <button id="mQr" class="row-btn">새 기기 연결 (QR·코드 보기)</button>
       <button id="mInstall" class="row-btn" hidden>앱으로 설치</button>
       <button id="mClear" class="row-btn danger-text">대화 지우기</button>
+      <button id="mRemote" class="row-btn">원격 화면 보기 (다른 PC)</button>
       <button id="mExt" class="row-btn">방문 기록 지우기 (크롬 확장)</button>
       <button id="mRename" class="row-btn">이 기기 이름 바꾸기</button>
       <button id="mUnpair" class="row-btn danger-text">연결 해제</button>
@@ -241,5 +261,6 @@
   <div id="toast" class="toast" role="status"></div>
   <script src="vendor/qrcode.js"></script>
   <script src="app.js"></script>
+  <script src="remote.js"></script>
 </body>
 </html>

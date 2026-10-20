@@ -102,6 +102,16 @@ input, textarea { font: inherit; color: var(--text); }
 .ios-share { display: inline-grid; vertical-align: -5px; color: var(--accent); }
 .ios-share svg { width: 20px; height: 20px; }
 
+/* ── 원격 화면 (이슈 #17) ────────────────── */
+.remote { height: 100dvh; display: flex; flex-direction: column; background: var(--bg); }
+.remote header { display: flex; align-items: center; gap: 4px; padding: 8px 8px 8px 8px; padding-top: max(8px, env(safe-area-inset-top)); background: var(--bar); border-bottom: .5px solid var(--line); }
+.remote-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; background: #0b0b0d; overflow: hidden; }
+.remote-stage canvas { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.remote-empty { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; text-align: center; padding: 24px; color: #d0d0d6; }
+.remote-empty .empty-sub { color: #9a9aa2; }
+.remote-empty code { font: 600 12px ui-monospace, Consolas, monospace; background: #26262a; padding: 1px 6px; border-radius: 5px; }
+.remote-stats { margin: 0; padding: 6px 12px max(6px, env(safe-area-inset-bottom)); text-align: center; font-size: 12px; color: var(--muted); background: var(--bar); border-top: .5px solid var(--line); min-height: 1.6em; }
+
 /* ── 방문 기록 지우기 (확장) ─────────────── */
 #extScreen { justify-content: flex-start; max-width: 460px; }
 .back { align-self: flex-start; padding: 4px 0; margin-bottom: 8px; }
