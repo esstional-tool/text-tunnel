@@ -735,6 +735,15 @@ $('confirmCancel').onclick = closeSheets;
 for (const s of ['menu', 'confirm']) $(s).onclick = (e) => { if (e.target === $(s)) closeSheets(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheets(); });
 
+// 앱 창이 앞에 있을 때의 완전 정리 단축키. 확장의 전역 단축키는 다른 프로그램이 같은 키를 먼저 잡으면
+// Windows 가 소리 없이 무시하므로, 앱이 직접 받아 확실히 동작하게 한다. 키보드 배열·한글 입력과 상관없이 숫자 9 자리 키
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey || !e.shiftKey || e.altKey || e.code !== 'Digit9') return;
+  e.preventDefault();
+  if (ext) return toExt({ type: 'wipe' }); // 확장이 앱 창 닫기·사이트 데이터·방문 기록까지 지운다
+  wipeHere().then(() => { try { window.close(); } catch {} }); // 확장이 없으면 대화·연결 정보까지만
+}, true);
+
 // 파일을 창에 끌어다 놓으면 보낸다 (PC)
 let dragDepth = 0;
 const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
