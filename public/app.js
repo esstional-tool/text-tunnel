@@ -523,9 +523,10 @@ function clearList() {
 async function clearChat() {
   closeSheets();
   if (DEMO) { clearList(); return toast('대화를 지웠어요'); }
-  const r = await fetch(api('clear'), { method: 'POST' }).catch(() => null);
-  if (!r?.ok) toast('지우지 못했어요. 연결을 확인해 주세요');
-  // 화면은 서버가 보내는 'clear' 알림을 받아 양쪽에서 같이 비운다
+  const r = token ? await fetch(api('clear'), { method: 'POST' }).catch(() => null) : null;
+  // 연결돼 있으면 화면은 서버가 보내는 'clear' 알림을 받아 양쪽에서 같이 비운다.
+  // 연결이 끊겼으면 적어도 이 화면은 바로 비운다
+  if (!r?.ok) { clearList(); toast('이 화면만 지웠어요 · 연결이 끊겨 상대 화면은 그대로예요'); }
 }
 
 function askConfirm(title, sub, okText, onOk) {
@@ -567,6 +568,12 @@ function unpair() {
 /* ── 방문 기록 지우기 (크롬 확장과 연결) ─── */
 // 확장의 content.js 가 { source: 'tt-ext' } 메시지로 응답한다. 설치 전에 열린 페이지에는 붙지 않아 새로고침이 필요하다
 let ext = null;
+const EXT_LATEST = '1.2.0'; // extension/manifest.json 의 version 과 맞춘다
+const older = (a = '0', b = '0') => {
+  const [x, y] = [a, b].map((v) => v.split('.').map(Number));
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0);
+  return false;
+};
 const toExt = (m) => window.postMessage({ source: 'tt-app', ...m }, location.origin);
 addEventListener('message', (e) => {
   if (e.source !== window || e.data?.source !== 'tt-ext') return;
@@ -574,7 +581,7 @@ addEventListener('message', (e) => {
   ext = { ...ext, ...e.data };
   if (e.data.type === 'cleaned') {
     $('extClean').disabled = false;
-    $('extResult').textContent = e.data.error ? `지우지 못했어요: ${e.data.error}` : `방문 기록 ${e.data.count}개와 캐시를 지웠어요`;
+    $('extResult').textContent = e.data.error ? `지우지 못했어요: ${e.data.error}` : `기록 ${e.data.count}개, 다운로드 목록 ${e.data.downloads ?? 0}개, 캐시를 지웠어요`;
   }
   renderExt();
 });
@@ -588,6 +595,8 @@ function renderExt() {
     $('extKey').textContent = ext.shortcut || '단축키 없음';
     // 1.0 확장은 완전 정리를 모른다
     $('extWipe').disabled = !ext.shortcut && ext.version === '1.0.0';
+    $('extUpdate').hidden = !older(ext.version, EXT_LATEST);
+    $('extLatest').textContent = `v${EXT_LATEST}`;
   }
 }
 
@@ -725,15 +734,40 @@ $('mExt').hidden = IS_MOBILE;
 $('extBack').onclick = () => (key ? enterChat() : show('welcome'));
 $('extCopy').onclick = () => copy($('extUrl').textContent, '복사했어요. 새 탭 주소창에 붙여 넣으세요');
 $('extReload').onclick = () => { try { sessionStorage.setItem('tt.openExt', '1'); } catch {} location.reload(); };
+$('extRecheck').onclick = () => $('extReload').onclick();
 $('extClean').onclick = () => { $('extClean').disabled = true; $('extResult').textContent = '지우는 중…'; toExt({ type: 'clean' }); };
 $('extAuto').onchange = (e) => toExt({ type: 'auto', on: e.target.checked });
 $('extWipe').onclick = () => askConfirm('완전 정리할까요?', '양쪽 대화·서버 파일을 지우고, 연결을 해제하고, 이 사이트의 데이터·캐시·방문 기록을 지운 뒤 앱을 닫아요. 다시 쓰려면 QR로 새로 연결해야 해요.', '완전 정리', () => { closeSheets(); toExt({ type: 'wipe' }); });
 $('mUnpair').onclick = () => askConfirm('연결을 해제할까요?', '이 기기에서 연결 정보가 지워져요. 다시 쓰려면 QR로 새로 연결해야 해요.', '연결 해제', unpair);
 $('mClear').onclick = () => askConfirm('대화를 지울까요?', '양쪽 화면의 대화와 서버에 남은 사진·파일을 바로 지워요. 되돌릴 수 없어요.', '대화 지우기', clearChat);
 $('mClose').onclick = closeSheets;
+// 헤더 휴지통: 확인 없이 바로 양쪽 대화·서버 파일 삭제
+$('trashBtn').onclick = () => {
+  if (!$('scroller').classList.contains('has-msgs') && !tray.length) return toast('지울 대화가 없어요');
+  clearTray();
+  clearChat();
+};
 $('confirmCancel').onclick = closeSheets;
 for (const s of ['menu', 'confirm']) $(s).onclick = (e) => { if (e.target === $(s)) closeSheets(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheets(); });
+
+// 앱 창이 앞에 있을 때의 완전 정리 단축키. 확장의 전역 단축키는 다른 프로그램이 같은 키를 먼저 잡으면
+// Windows 가 소리 없이 무시하므로, 앱이 직접 받아 확실히 동작하게 한다.
+// 확장에 설정된 단축키(예: 'Ctrl+Shift+8')를 따라가고, 확장이 없으면 Ctrl+Shift+9.
+// 키보드 배열·한글 입력과 상관없게 e.code(물리 키 위치)로 비교한다
+function wipeKey() {
+  const parts = (ext?.shortcut || 'Ctrl+Shift+9').split('+').map((s) => s.trim());
+  const last = parts.pop() || '';
+  const code = /^\d$/.test(last) ? `Digit${last}` : /^[A-Z]$/i.test(last) ? `Key${last.toUpperCase()}` : last;
+  return { code, ctrl: parts.includes('Ctrl'), shift: parts.includes('Shift'), alt: parts.includes('Alt') };
+}
+document.addEventListener('keydown', (e) => {
+  const k = wipeKey();
+  if (e.code !== k.code || e.ctrlKey !== k.ctrl || e.shiftKey !== k.shift || e.altKey !== k.alt) return;
+  e.preventDefault();
+  if (ext) return toExt({ type: 'wipe' }); // 확장이 앱 창 닫기·사이트 데이터·방문 기록까지 지운다
+  wipeHere().then(() => { try { window.close(); } catch {} }); // 확장이 없으면 대화·연결 정보까지만
+}, true);
 
 // 파일을 창에 끌어다 놓으면 보낸다 (PC)
 let dragDepth = 0;

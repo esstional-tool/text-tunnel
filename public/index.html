@@ -95,14 +95,20 @@
 
     <div id="extOn" class="ext-card on" hidden>
       <p class="ext-state"><span class="dot on"></span> 설치됨 <span id="extVer" class="sub"></span></p>
+      <div id="extUpdate" class="note" hidden>
+        새 버전 <b id="extLatest"></b>이 있어요. 확장은 자동 업데이트가 안 돼서 직접 바꿔야 해요.<br>
+        ① <a href="/text-tunnel-cleaner.zip" download>zip 다시 받기</a> → ② 압축을 풀어 <b>기존 text-tunnel-cleaner 폴더에 덮어쓰기</b> → ③ 확장 페이지에서 <b>새로고침 ↻</b> → ④ 아래 '설치했어요 · 다시 확인'
+      </div>
       <label class="toggle">앱을 열 때마다 기록 자동 삭제 <input type="checkbox" id="extAuto"></label>
       <button id="extClean" class="primary wide">지금 지우기</button>
       <p id="extResult" class="sub center-text"></p>
       <div class="wipe-box">
         <p class="wipe-title"><kbd id="extKey">Ctrl+Shift+9</kbd> 완전 정리</p>
-        <p class="sub">앱 창이 뒤에 있어도 이 단축키를 누르면 양쪽 대화·서버 파일을 지우고, 연결을 해제하고, 이 사이트의 데이터·캐시·방문 기록을 지운 뒤 앱을 닫아요. 다시 쓰려면 QR로 새로 연결해요.</p>
+        <p class="sub">이 단축키를 누르면 양쪽 대화·서버 파일을 지우고, 연결을 해제하고, 이 사이트의 데이터·캐시·방문 기록을 지운 뒤 앱을 닫아요. 다시 쓰려면 QR로 새로 연결해요.</p>
+        <p class="sub">앱 창이 앞에 있으면 항상 동작해요. 앱 창이 뒤에 있을 때 안 되면 다른 프로그램이 같은 키를 쓰고 있는 거예요. 크롬에 같은 확장이 있다면 지우고, <code>edge://extensions/shortcuts</code> 에서 Ctrl+Shift+8 처럼 다른 숫자로 바꿔 보세요.</p>
         <button id="extWipe" class="danger">지금 완전 정리</button>
       </div>
+      <button id="extRecheck" class="secondary wide">설치했어요 · 다시 확인</button>
     </div>
 
     <div id="extOff" class="ext-card">
@@ -127,6 +133,9 @@
         <strong id="peerTitle">Text Tunnel</strong>
         <span class="status"><span id="dot" class="dot"></span><span id="status">연결 중…</span></span>
       </div>
+      <button id="trashBtn" class="icon-btn" aria-label="대화 지우기 (양쪽 화면·서버 파일)" title="대화 지우기 (양쪽 화면·서버 파일)">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      </button>
       <button id="menuBtn" class="icon-btn" aria-label="메뉴" title="메뉴">
         <svg viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/></svg>
       </button>
