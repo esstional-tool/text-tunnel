@@ -87,6 +87,34 @@
     <button id="installSkip" class="link">설치 없이 바로 쓰기</button>
   </section>
 
+  <!-- PC: 방문 기록 지우기 확장 프로그램 -->
+  <section id="extScreen" class="screen" hidden>
+    <button id="extBack" class="link back">‹ 대화로 돌아가기</button>
+    <h2>방문 기록 지우기</h2>
+    <p class="sub">웹사이트는 브라우저 방문 기록을 직접 지울 수 없어서, 작은 크롬 확장 프로그램이 대신 지워요. 엣지에서도 돼요.</p>
+
+    <div id="extOn" class="ext-card on" hidden>
+      <p class="ext-state"><span class="dot on"></span> 설치됨 <span id="extVer" class="sub"></span></p>
+      <label class="toggle">앱을 열 때마다 기록 자동 삭제 <input type="checkbox" id="extAuto"></label>
+      <button id="extClean" class="primary wide">지금 지우기</button>
+      <p id="extResult" class="sub center-text"></p>
+    </div>
+
+    <div id="extOff" class="ext-card">
+      <p class="ext-state"><span class="dot"></span> 아직 설치되지 않았어요</p>
+      <a id="extDownload" class="primary wide as-btn" href="/text-tunnel-cleaner.zip" download>확장 프로그램 받기 (.zip)</a>
+      <ol class="steps install-steps">
+        <li>받은 <b>text-tunnel-cleaner.zip</b>을 마우스 오른쪽 → <b>압축 풀기</b></li>
+        <li>새 탭 주소창에 <code id="extUrl">chrome://extensions</code> <button id="extCopy" class="mini">복사</button> 붙여 넣기</li>
+        <li>오른쪽 위 <b>개발자 모드</b> 켜기</li>
+        <li><b>압축해제된 확장 프로그램을 로드합니다</b> → 압축 푼 <b>text-tunnel-cleaner</b> 폴더 선택</li>
+        <li>아래 버튼을 누르면 <b>설치됨</b>으로 바뀌어요</li>
+      </ol>
+      <button id="extReload" class="secondary wide">설치했어요 · 다시 확인</button>
+      <p class="note">Text Tunnel 주소의 기록과 캐시만 지우고, 다른 사이트 기록과 연결 정보는 건드리지 않아요. 회사 PC 정책으로 개발자 모드가 막혀 있으면 설치할 수 없어요.</p>
+    </div>
+  </section>
+
   <!-- 대화 -->
   <main id="chat" hidden>
     <header>
@@ -137,6 +165,7 @@
       <p class="sheet-title" id="menuName"></p>
       <button id="mQr" class="row-btn">새 기기 연결 (QR·코드 보기)</button>
       <button id="mInstall" class="row-btn" hidden>앱으로 설치</button>
+      <button id="mExt" class="row-btn">방문 기록 지우기 (크롬 확장)</button>
       <button id="mRename" class="row-btn">이 기기 이름 바꾸기</button>
       <button id="mUnpair" class="row-btn danger-text">연결 해제</button>
       <button id="mClose" class="plain">닫기</button>

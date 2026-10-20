@@ -40,7 +40,7 @@ function guessName() {
 }
 
 /* ── 화면 전환 ─────────────────────────── */
-const SCREENS = ['boot', 'welcome', 'codeForm', 'qrScreen', 'install', 'chat'];
+const SCREENS = ['boot', 'welcome', 'codeForm', 'qrScreen', 'install', 'chat', 'extScreen'];
 function show(id) { for (const s of SCREENS) $(s).hidden = s !== id; }
 
 /* ── 서버 깨우기 (무료 서버는 쉬면 잠든다) ─── */
@@ -379,6 +379,33 @@ function unpair() {
   show('welcome');
 }
 
+/* ── 방문 기록 지우기 (크롬 확장과 연결) ─── */
+// 확장의 content.js 가 { source: 'tt-ext' } 메시지로 응답한다. 설치 전에 열린 페이지에는 붙지 않아 새로고침이 필요하다
+let ext = null;
+const toExt = (m) => window.postMessage({ source: 'tt-app', ...m }, location.origin);
+addEventListener('message', (e) => {
+  if (e.source !== window || e.data?.source !== 'tt-ext') return;
+  ext = e.data;
+  if (e.data.type === 'cleaned') {
+    $('extClean').disabled = false;
+    $('extResult').textContent = e.data.error ? `지우지 못했어요: ${e.data.error}` : `방문 기록 ${e.data.count}개와 캐시를 지웠어요`;
+  }
+  renderExt();
+});
+
+function renderExt() {
+  $('extOn').hidden = !ext;
+  $('extOff').hidden = !!ext;
+  if (ext) { $('extVer').textContent = `v${ext.version}`; $('extAuto').checked = ext.auto !== false; }
+}
+
+function openExt() {
+  closeSheets();
+  show('extScreen');
+  $('extUrl').textContent = /Edg\//.test(navigator.userAgent) ? 'edge://extensions' : 'chrome://extensions';
+  renderExt(); toExt({ type: 'ping' });
+}
+
 /* ── 작은 도구들 ───────────────────────── */
 async function copy(text, msg) {
   try { await navigator.clipboard.writeText(text); }
@@ -455,6 +482,13 @@ $('menuBtn').onclick = openMenu;
 $('mQr').onclick = () => { closeSheets(); openQr(); };
 $('mInstall').onclick = () => { closeSheets(); installPrompt ? runInstall() : showInstall(); };
 $('mRename').onclick = rename;
+$('mExt').onclick = openExt;
+$('mExt').hidden = IS_MOBILE;
+$('extBack').onclick = () => (key ? enterChat() : show('welcome'));
+$('extCopy').onclick = () => copy($('extUrl').textContent, '복사했어요. 새 탭 주소창에 붙여 넣으세요');
+$('extReload').onclick = () => { try { sessionStorage.setItem('tt.openExt', '1'); } catch {} location.reload(); };
+$('extClean').onclick = () => { $('extClean').disabled = true; $('extResult').textContent = '지우는 중…'; toExt({ type: 'clean' }); };
+$('extAuto').onchange = (e) => toExt({ type: 'auto', on: e.target.checked });
 $('mUnpair').onclick = () => { $('menu').hidden = true; $('confirm').hidden = false; $('confirmCancel').focus(); };
 $('mClose').onclick = closeSheets;
 $('confirmOk').onclick = unpair;
@@ -503,6 +537,8 @@ if ('serviceWorker' in navigator && !DEMO) navigator.serviceWorker.register('sw.
 function startDemo(scene) {
   myId = 'me'; myName = 'PC';
   if (scene === 'welcome') return show('welcome');
+  if (scene === 'ext') return openExt();
+  if (scene === 'ext-on') { ext = { version: '1.0.0', auto: true }; return openExt(); }
   if (scene === 'code') { show('codeForm'); $('codeInput').value = 'K7M 4Q'; return; }
   if (scene === 'qr') return openQr();
   if (scene.startsWith('install')) {
@@ -535,6 +571,11 @@ function startDemo(scene) {
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
   await wake();
   if (pairCode) { show('codeForm'); $('codeInput').value = `${pairCode.slice(0, 3)} ${pairCode.slice(3)}`; return claim(pairCode); }
-  if (key) return enterChat();
+  toExt({ type: 'ping' });
+  let reopenExt = false;
+  try { reopenExt = sessionStorage.getItem('tt.openExt') === '1'; sessionStorage.removeItem('tt.openExt'); } catch {}
+  if (key) enterChat();
+  if (reopenExt) return openExt();
+  if (key) return;
   show('welcome');
 })();
