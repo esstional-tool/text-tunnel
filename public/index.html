@@ -27,6 +27,7 @@
     <img src="icon.svg" alt="" class="brand-icon">
     <h1>Text Tunnel</h1>
     <p class="sub">내 PC와 휴대폰을 한 번 연결해 두면<br>앱만 열어도 바로 주고받을 수 있어요</p>
+    <p id="mobileHint" class="note" hidden>휴대폰이라면 PC 화면에 뜬 QR을 <b>휴대폰 기본 카메라</b>로 찍으세요</p>
 
     <div class="choices">
       <button id="startPair" class="primary">
@@ -72,7 +73,10 @@
 
     <div id="installAndroid" hidden>
       <button id="installBtn" class="primary wide">앱 설치하기</button>
-      <p id="installManual" class="steps" hidden>브라우저 메뉴 <b>⋮</b> → <b>앱 설치</b> 또는 <b>홈 화면에 추가</b></p>
+      <div id="installManual" hidden>
+        <p class="steps">브라우저 메뉴 <b>⋮</b> → <b>앱 설치</b> 또는 <b>홈 화면에 추가</b></p>
+        <p class="note">메뉴에 설치가 없다면 카메라·렌즈 앱 안의 미니 브라우저로 열린 거예요. 여기서는 연결이 저장되지 않으니 <b>Chrome</b>에서 이 주소를 열고 PC 화면의 QR을 다시 찍어 주세요.</p>
+      </div>
     </div>
     <ol id="installIos" class="steps ios" hidden>
       <li>아래쪽 <b>공유</b> 버튼 <span class="ios-share" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15V3M8 7l4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg></span> 누르기</li>
@@ -99,8 +103,9 @@
       <div id="empty" class="empty">
         <div id="emptyWait">
           <p class="empty-title">상대 기기를 기다리는 중</p>
-          <p class="empty-sub">연결해 둔 휴대폰이나 PC에서<br>Text Tunnel을 열어 주세요</p>
-          <button id="emptyQr" class="pill">새 기기 연결</button>
+          <p class="empty-sub">연결해 둔 기기에서 Text Tunnel을 열면 바로 연결돼요.<br>연결이 풀린 기기는 아래 QR을 찍거나 코드를 입력하세요</p>
+          <div id="waitQr" class="qr-box small" aria-label="다시 연결용 QR코드"></div>
+          <p id="waitCode" class="code-mid tabular"></p>
         </div>
         <div id="emptyReady" hidden>
           <p class="empty-title">연결됐어요</p>

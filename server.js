@@ -15,6 +15,7 @@ const ROOM_SIZE = 2;
 const FILE_TTL = 10 * 60 * 1000;
 const PAIR_TTL = 5 * 60 * 1000;     // 짝 코드 유효 시간
 const GRACE = 30 * 1000;            // 연결이 끊긴 기기를 기다려 주는 시간 (화면 꺼짐·새로고침)
+const STALE = (Number(process.env.STALE_SEC) || 90) * 1000;          // 이만큼 살아 있다는 신호가 없으면, 방이 꽉 찼을 때 자리를 내준다
 const CHUNK_MAX = 16 * 1024 * 1024; // 브라우저는 8MB씩 보낸다. 여유를 둔 상한
 const PUB = path.join(__dirname, 'public');
 
@@ -65,7 +66,14 @@ function auth(url) {
   const token = url.searchParams.get('token') || '';
   const room = rooms.get(tokens.get(token));
   const member = room?.members.get(token);
+  if (member) member.seen = Date.now(); // 앱은 20초마다 /api/ping 으로 살아 있음을 알린다
   return member ? { room, member, token } : null;
+}
+
+function dropMember(room, token) {
+  const m = room.members.get(token);
+  clearTimeout(m.timer); m.res?.end();
+  room.members.delete(token); tokens.delete(token);
 }
 
 /* ── 짝 코드 ────────────────────────────── */
@@ -195,11 +203,16 @@ const server = http.createServer((req, res) => {
         rooms.set(id, room);
       }
       // 같은 기기가 다시 들어오면(새로고침·앱 재실행) 이전 자리를 비운다
-      for (const [t, m] of room.members) if (m.device === device) { clearTimeout(m.timer); m.res?.end(); room.members.delete(t); tokens.delete(t); }
+      for (const [t, m] of room.members) if (m.device === device) dropMember(room, t);
+      // 꽉 찼으면 소식이 끊긴 자리(앱 강제 종료 등으로 남은 유령)를 가장 오래된 것부터 비운다
+      if (room.members.size >= ROOM_SIZE) {
+        const stale = [...room.members].filter(([, m]) => Date.now() - m.seen > STALE).sort(([, a], [, b]) => a.seen - b.seen);
+        if (stale.length) { dropMember(room, stale[0][0]); presence(room); }
+      }
       if (room.members.size >= ROOM_SIZE) return send(res, 409, { error: '이미 두 기기가 연결돼 있어요' });
 
       const token = crypto.randomBytes(24).toString('base64url');
-      const member = { id: crypto.randomUUID(), device, name, res: null, timer: null };
+      const member = { id: crypto.randomUUID(), device, name, res: null, timer: null, seen: Date.now() };
       member.timer = setTimeout(() => removeMember(room, token), GRACE); // 연결을 안 열면 정리
       room.members.set(token, member);
       tokens.set(token, id);
