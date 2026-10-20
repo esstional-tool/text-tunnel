@@ -3,11 +3,12 @@
 //
 //   처음 한 번:  remote-agent.exe --code ABC123            (메신저 앱 메뉴 → 새 기기 연결 의 코드)
 //   그다음부터:  remote-agent.exe                          (저장된 열쇠로 자동 연결)
-//   옵션:        --server https://…  --config <폴더>
+//   옵션:        --server https://…  --config <폴더>  --quiet (접속 알림 토스트·소리 끄기, 띠는 그대로 — 시험용)
 //
 // 안전장치 (무인 접속이라 필수)
 //   · 트레이 아이콘이 항상 떠 있고, 거기서 언제든 OFF / 종료
-//   · 누군가 화면을 보는 동안 화면 맨 위에 빨간 "원격 접속 중" 띠가 항상 떠 있음 (끌 수 없음)
+//   · 누군가 화면을 보는 동안 화면 맨 위에 빨간 "원격 접속 중" 띠가 항상 떠 있음 (끌 수 없음, 1초마다 다시 맨 위로)
+//   · 보기 시작하는 순간 토스트 + 소리, 끝나면 토스트 — 이 PC 앞에 있는 사람에게만 (보는 쪽에는 알림 없음)
 //   · 보는 사람이 없으면 화면을 찍지도 보내지도 않음
 //   · 같은 짝 열쇠를 가진 기기만 볼 수 있음
 //
@@ -29,6 +30,7 @@ static class Native
 {
     // 화면 배율(DPI)이 150% 같은 PC 에서도 실제 픽셀 크기로 찍으려면 필요하다
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
 }
 
 static class Json
@@ -164,6 +166,12 @@ class Banner : Form
     {
         get { CreateParams p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x00000080; return p; } // NOACTIVATE | TOOLWINDOW
     }
+    // 다른 최상위 창(발표·동영상 등)이 덮어도 다시 맨 위로 올린다. 포커스는 빼앗지 않음.
+    // HWND_TOPMOST(-1), SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_SHOWWINDOW
+    public void KeepOnTop()
+    {
+        if (Visible && IsHandleCreated) Native.SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010 | 0x0040);
+    }
     public void SetCount(int n)
     {
         label.Text = "● 원격 접속 중 (" + n + "명이 이 화면을 보고 있어요) — 트레이 아이콘에서 끌 수 있어요";
@@ -173,7 +181,8 @@ class Banner : Form
 // 트레이 아이콘 + 전체 흐름
 class AgentContext : ApplicationContext
 {
-    readonly Server server; readonly string key; readonly string name;
+    readonly Server server; readonly string key; readonly string name; readonly bool quiet;
+    int lastViewers = 0; // 알림용: 보는 사람 수가 달라진 순간을 알아채려고
     readonly NotifyIcon tray = new NotifyIcon();
     readonly Banner banner = new Banner();
     readonly ToolStripMenuItem toggle = new ToolStripMenuItem();
@@ -185,9 +194,9 @@ class AgentContext : ApplicationContext
     volatile HttpWebRequest events;
     volatile int framesSent, lastKb;
 
-    public AgentContext(Server server, string key, string name)
+    public AgentContext(Server server, string key, string name, bool quiet)
     {
-        this.server = server; this.key = key; this.name = name;
+        this.server = server; this.key = key; this.name = name; this.quiet = quiet;
         banner.Visible = false; banner.Opacity = 1;
         IntPtr unused = banner.Handle; // 핸들을 미리 만들어 둔다 (다른 스레드에서 BeginInvoke 하려고)
 
@@ -216,7 +225,23 @@ class AgentContext : ApplicationContext
         tray.Text = "text-tunnel 원격: " + (!on ? "꺼짐" : (viewers > 0 ? "보는 중 " + viewers + "명" : "대기 중"));
         bool show = on && viewers > 0;
         if (show != banner.Visible) { if (show) banner.Show(); else banner.Hide(); }
-        if (show) banner.SetCount(viewers);
+        if (show) { banner.SetCount(viewers); banner.KeepOnTop(); } // 1초마다 불리므로 덮여도 곧 복구
+        Alert(on ? viewers : 0);
+    }
+
+    // 이 PC 앞에 있는 사람에게만 알린다 (보는 쪽에는 아무 알림도 없음).
+    // 보기 시작하는 순간: 토스트 + 소리, 끝나는 순간: 토스트.  --quiet 이면 알림·소리를 끄고 띠만 유지한다 (시험용)
+    void Alert(int now)
+    {
+        int before = lastViewers; lastViewers = now;
+        if (quiet || now == before) return;
+        if (now > before)
+        {
+            tray.ShowBalloonTip(5000, "누군가 이 PC 화면을 보고 있어요", "지금 " + now + "명이 보는 중이에요. 트레이 아이콘에서 끌 수 있어요.", ToolTipIcon.Warning);
+            System.Media.SystemSounds.Exclamation.Play();
+        }
+        else if (now == 0)
+            tray.ShowBalloonTip(3000, "원격 접속이 끝났어요", "더 이상 이 PC 화면을 보는 사람이 없어요.", ToolTipIcon.Info);
     }
 
     void UI(Action a) { if (!banner.IsDisposed && banner.IsHandleCreated) banner.BeginInvoke(a); }
@@ -328,7 +353,8 @@ static class Program
             return 1;
         }
         string key = File.ReadAllText(keyFile, Encoding.ASCII).Trim();
-        Application.Run(new AgentContext(server, key, Environment.MachineName));
+        bool quiet = Array.IndexOf(args, "--quiet") >= 0;
+        Application.Run(new AgentContext(server, key, Environment.MachineName, quiet));
         return 0;
     }
 }
