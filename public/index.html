@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Tunnel">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg">
@@ -14,60 +15,96 @@
   <title>Text Tunnel</title>
 </head>
 <body>
-  <!-- 입장 -->
-  <form id="entry" class="entry" hidden novalidate>
-    <div class="brand">
-      <img src="icon.svg" alt="" class="brand-icon">
-      <h1>Text Tunnel</h1>
-      <p>같은 방에 들어온 기기끼리 주고받아요</p>
+  <!-- 서버 깨우는 중 (무료 서버가 잠들어 있을 때) -->
+  <div id="boot" class="screen center" hidden>
+    <div class="spinner" aria-hidden="true"></div>
+    <p class="lead">서버를 깨우는 중이에요</p>
+    <p class="sub">오래 쉬었다가 열면 최대 1분쯤 걸려요</p>
+  </div>
+
+  <!-- 처음: 아직 짝을 맺지 않은 기기 -->
+  <section id="welcome" class="screen center" hidden>
+    <img src="icon.svg" alt="" class="brand-icon">
+    <h1>Text Tunnel</h1>
+    <p class="sub">내 PC와 휴대폰을 한 번 연결해 두면<br>앱만 열어도 바로 주고받을 수 있어요</p>
+
+    <div class="choices">
+      <button id="startPair" class="primary">
+        <svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2"/></svg>
+        QR 띄우기
+        <small>PC에서 누르세요</small>
+      </button>
+      <button id="showCode" class="secondary">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+        코드 입력하기
+        <small>휴대폰에서 QR을 못 찍을 때</small>
+      </button>
     </div>
+  </section>
 
-    <div class="seg" role="tablist">
-      <button type="button" role="tab" id="tabJoin" aria-selected="true">들어가기</button>
-      <button type="button" role="tab" id="tabCreate" aria-selected="false">새 방 만들기</button>
-    </div>
-
-    <label class="fld">
-      <span>방 이름</span>
-      <input id="roomInput" type="text" maxlength="30" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="예: 우리집">
-    </label>
-    <label class="fld">
-      <span>방 비밀번호</span>
-      <input id="pwInput" type="password" autocomplete="off" placeholder="4자 이상">
-    </label>
-    <label class="fld">
-      <span>이 기기 이름</span>
-      <input id="nameInput" type="text" maxlength="20" placeholder="예: 휴대폰">
-    </label>
-
-    <button type="submit" id="entryBtn" class="primary">들어가기</button>
-    <p id="entryErr" class="err" role="alert"></p>
-    <p class="foot">모두 나가면 방과 대화가 바로 사라져요</p>
+  <!-- 코드 입력 -->
+  <form id="codeForm" class="screen center" hidden novalidate>
+    <h2>연결 코드 입력</h2>
+    <p class="sub">다른 기기 화면에 보이는 6자리를 입력하세요</p>
+    <input id="codeInput" class="code-input" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="7" placeholder="ABC 123" aria-label="연결 코드">
+    <button type="submit" id="codeBtn" class="primary wide">연결하기</button>
+    <p id="codeErr" class="err" role="alert"></p>
+    <button type="button" id="codeBack" class="link">돌아가기</button>
   </form>
+
+  <!-- QR 보여주기 (짝 맺기·새 기기 연결) -->
+  <section id="qrScreen" class="screen center" hidden>
+    <h2>휴대폰 카메라로 찍으세요</h2>
+    <p class="sub">찍으면 바로 연결돼요</p>
+    <div id="qrBox" class="qr-box" aria-label="연결용 QR코드"></div>
+    <p class="code-label">또는 코드 입력</p>
+    <p id="qrCode" class="code-big">······</p>
+    <p id="qrTimer" class="sub tabular"></p>
+    <button id="qrRenew" class="link" hidden>새 코드 받기</button>
+    <button id="qrClose" class="secondary wide">닫기</button>
+  </section>
+
+  <!-- 짝 맺은 직후 휴대폰: 앱 설치 안내 -->
+  <section id="install" class="screen center" hidden>
+    <div class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg></div>
+    <h2>연결됐어요</h2>
+    <p class="sub">앱으로 설치하면 다음부터 아이콘만 누르면 열려요</p>
+
+    <div id="installAndroid" hidden>
+      <button id="installBtn" class="primary wide">앱 설치하기</button>
+      <p id="installManual" class="steps" hidden>브라우저 메뉴 <b>⋮</b> → <b>앱 설치</b> 또는 <b>홈 화면에 추가</b></p>
+    </div>
+    <ol id="installIos" class="steps ios" hidden>
+      <li>아래쪽 <b>공유</b> 버튼 <span class="ios-share" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15V3M8 7l4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg></span> 누르기</li>
+      <li><b>홈 화면에 추가</b> 누르기</li>
+      <li>홈 화면의 <b>Tunnel</b> 아이콘 열기</li>
+      <li>PC에서 <b>새 기기 연결</b>을 눌러 나온 코드를 <b>한 번만</b> 입력</li>
+    </ol>
+    <button id="installSkip" class="link">설치 없이 바로 쓰기</button>
+  </section>
 
   <!-- 대화 -->
   <main id="chat" hidden>
     <header>
       <div class="title">
-        <strong id="roomName">방</strong>
+        <strong id="peerTitle">Text Tunnel</strong>
         <span class="status"><span id="dot" class="dot"></span><span id="status">연결 중…</span></span>
       </div>
-      <button id="invite" class="icon-btn" title="초대 링크 복사" aria-label="초대 링크 복사">
-        <svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+      <button id="menuBtn" class="icon-btn" aria-label="메뉴" title="메뉴">
+        <svg viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/></svg>
       </button>
-      <button id="leave" class="text-btn">나가기</button>
     </header>
 
     <div id="scroller" class="scroller">
       <div id="empty" class="empty">
-        <div id="emptyAlone">
-          <p class="empty-title">아직 나 혼자 있어요</p>
-          <p class="empty-sub">다른 기기에서 <b id="emptyRoom"></b> 방에<br>같은 비밀번호로 들어오세요</p>
-          <button id="emptyInvite" class="pill">초대 링크 복사</button>
+        <div id="emptyWait">
+          <p class="empty-title">상대 기기를 기다리는 중</p>
+          <p class="empty-sub">연결해 둔 휴대폰이나 PC에서<br>Text Tunnel을 열어 주세요</p>
+          <button id="emptyQr" class="pill">새 기기 연결</button>
         </div>
         <div id="emptyReady" hidden>
           <p class="empty-title">연결됐어요</p>
-          <p class="empty-sub">메시지·사진·동영상을 보내 보세요<br>새로고침하면 대화는 사라져요</p>
+          <p class="empty-sub">메시지·사진·동영상·파일을 보내 보세요<br>대화는 어디에도 저장되지 않아요</p>
         </div>
       </div>
       <ol id="list"></ol>
@@ -89,17 +126,30 @@
     <div id="drop" class="drop" hidden><div>여기에 놓으면 보내요</div></div>
   </main>
 
-  <!-- 나가기 확인 -->
-  <div id="sheet" class="sheet" hidden>
-    <div class="sheet-card" role="dialog" aria-labelledby="sheetTitle">
-      <p id="sheetTitle" class="sheet-title">방에서 나갈까요?</p>
-      <p id="sheetSub" class="sheet-sub"></p>
-      <button id="sheetOk" class="danger">나가기</button>
-      <button id="sheetCancel" class="plain">취소</button>
+  <!-- 메뉴 -->
+  <div id="menu" class="sheet" hidden>
+    <div class="sheet-card" role="dialog" aria-label="메뉴">
+      <p class="sheet-title" id="menuName"></p>
+      <button id="mQr" class="row-btn">새 기기 연결 (QR·코드 보기)</button>
+      <button id="mInstall" class="row-btn" hidden>앱으로 설치</button>
+      <button id="mRename" class="row-btn">이 기기 이름 바꾸기</button>
+      <button id="mUnpair" class="row-btn danger-text">연결 해제</button>
+      <button id="mClose" class="plain">닫기</button>
+    </div>
+  </div>
+
+  <!-- 연결 해제 확인 -->
+  <div id="confirm" class="sheet" hidden>
+    <div class="sheet-card" role="dialog" aria-labelledby="confirmTitle">
+      <p id="confirmTitle" class="sheet-title">연결을 해제할까요?</p>
+      <p class="sheet-sub">이 기기에서 연결 정보가 지워져요.<br>다시 쓰려면 QR로 새로 연결해야 해요.</p>
+      <button id="confirmOk" class="danger">연결 해제</button>
+      <button id="confirmCancel" class="plain">취소</button>
     </div>
   </div>
 
   <div id="toast" class="toast" role="status"></div>
+  <script src="vendor/qrcode.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
