@@ -141,7 +141,7 @@ function serveFile(f, req, res) {
   const head = {
     'Content-Type': f.mime,
     'Accept-Ranges': 'bytes',
-    'Cache-Control': 'private, max-age=600',
+    'Cache-Control': 'no-store', // 사진·동영상이 브라우저 캐시 폴더에 남지 않게
     'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`,
   };
   const m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
@@ -155,10 +155,57 @@ function serveFile(f, req, res) {
   res.end(f.buf.subarray(start, end + 1));
 }
 
+/* ── 크롬 확장 zip (extension/ 폴더를 시작할 때 한 번 묶어 둔다) ─── */
+// 압축 없이 저장만 하는 최소 ZIP. 크롬 '압축해제된 확장 프로그램 로드'에 쓸 폴더 하나가 나온다
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (buf) => { let c = 0xffffffff; for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+
+function makeZip(entries) { // [{ name, data }]
+  const locals = [], centrals = [];
+  let offset = 0;
+  const DOS_TIME = 0, DOS_DATE = (46 << 9) | (10 << 5) | 20; // 2026-10-20
+  for (const { name, data } of entries) {
+    const nameBuf = Buffer.from(name, 'utf8');
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6); // UTF-8 이름
+    local.writeUInt16LE(0, 8); local.writeUInt16LE(DOS_TIME, 10); local.writeUInt16LE(DOS_DATE, 12);
+    local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26); local.writeUInt16LE(0, 28);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(0, 10); central.writeUInt16LE(DOS_TIME, 12); central.writeUInt16LE(DOS_DATE, 14);
+    central.writeUInt32LE(crc, 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBuf.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, nameBuf, data);
+    centrals.push(central, nameBuf);
+    offset += 30 + nameBuf.length + data.length;
+  }
+  const cd = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, end]);
+}
+
+const EXT_DIR = path.join(__dirname, 'extension');
+let extZip = null;
+try {
+  extZip = makeZip(fs.readdirSync(EXT_DIR).sort().map((f) => ({ name: `text-tunnel-cleaner/${f}`, data: fs.readFileSync(path.join(EXT_DIR, f)) })));
+} catch { /* extension 폴더가 없으면 다운로드만 비활성 */ }
+
 /* ── 라우트 ─────────────────────────────── */
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
+  if (p === '/text-tunnel-cleaner.zip' && extZip) {
+    res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Length': extZip.length, 'Content-Disposition': 'attachment; filename="text-tunnel-cleaner.zip"', 'Cache-Control': 'no-cache' });
+    return res.end(extZip);
+  }
   if (!p.startsWith('/api/')) return serveStatic(url, res);
 
   if (p === '/api/health') return send(res, 200, 'ok');
