@@ -22,6 +22,8 @@ async function cdp(wsUrl) {
 
 (async () => {
   const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-agent-'));
+  const sink = path.join(cfg, 'sink.log'); // 에이전트가 실제 입력 대신 기록하는 파일 (이 시험은 이 PC 의 마우스·키보드를 건드리지 않는다)
+  const sinkLines = () => (fs.existsSync(sink) ? fs.readFileSync(sink, 'utf8').split('\n').filter(Boolean) : []);
   let agent;
   try {
     const { key } = await post('pair/start', {});
@@ -42,7 +44,7 @@ async function cdp(wsUrl) {
 
     // 에이전트를 켠다 (짝 코드는 메신저 "새 기기 연결" 과 같은 방식)
     const { code } = await post('pair/start', { key });
-    agent = spawn(EXE, ['--server', B, '--code', code, '--config', cfg, '--set-pin', PIN, '--quiet'], { stdio: 'ignore' }); // PIN 은 이 PC 의 주인이 에이전트에서 정함
+    agent = spawn(EXE, ['--server', B, '--code', code, '--config', cfg, '--set-pin', PIN, '--quiet', '--allow-control', '--input-sink', sink], { stdio: 'ignore' }); // PIN 은 이 PC 의 주인이 에이전트에서 정함
     await sleep(4000);
     const text = (id) => tab.evaluate(`document.getElementById('${id}').textContent`);
     const hidden = (id) => tab.evaluate(`document.getElementById('${id}').hidden`);
@@ -69,6 +71,38 @@ async function cdp(wsUrl) {
     await sleep(1500);
     const stats2 = await tab.evaluate(`document.getElementById('remoteStats').textContent`);
     ok(stats2 && stats2.includes('초당'), '속도 표시가 계속 갱신됨');
+
+    // ── 조종 (이슈 #23): 단추 → 캔버스 이벤트 → 입력 묶음 → 에이전트 (실제 입력은 sink 파일에 기록)
+    const ctl = () => tab.evaluate(`(() => { const b = document.getElementById('remoteCtl'); return { hidden: b.hidden, disabled: b.disabled, text: b.textContent, on: b.classList.contains('on'), stage: document.querySelector('.remote-stage').classList.contains('ctl') }; })()`);
+    const fire = (js) => tab.evaluate(`(() => { const c = document.getElementById('remoteCanvas'); const r = c.getBoundingClientRect(); const cx = r.left + r.width / 2, cy = r.top + r.height / 2; ${js} })()`);
+    let c0 = await ctl();
+    ok(!c0.hidden && !c0.disabled && c0.text === '조종 켜기' && !c0.on, `PIN 통과 후 "조종 켜기" 단추가 나타남 (주인이 허용한 PC): ${JSON.stringify(c0)}`);
+    await fire(`c.dispatchEvent(new MouseEvent('mousemove', { clientX: cx, clientY: cy, bubbles: true })); return 1;`); await sleep(400);
+    ok(sinkLines().length === 0, '조종을 켜기 전에는 캔버스 위에서 움직여도 아무것도 전송되지 않음');
+    await tab.evaluate(`document.getElementById('remoteCtl').click(); 1`); await sleep(1200);
+    c0 = await ctl();
+    ok(c0.text === '조종 끄기' && c0.on && c0.stage, `단추를 누르면 조종이 켜지고 화면에 표시(테두리)됨: ${JSON.stringify(c0)}`);
+    ok(await tab.evaluate(`document.activeElement === document.getElementById('remoteCanvas')`), '조종이 켜지면 캔버스에 포커스가 가서 키 입력을 받을 수 있음');
+    const prevented = await fire(`
+      c.dispatchEvent(new MouseEvent('mousemove', { clientX: cx, clientY: cy, bubbles: true }));
+      c.dispatchEvent(new MouseEvent('mousedown', { clientX: cx, clientY: cy, button: 0, bubbles: true, cancelable: true }));
+      c.dispatchEvent(new MouseEvent('mouseup', { clientX: cx, clientY: cy, button: 0, bubbles: true, cancelable: true }));
+      const w = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }); c.dispatchEvent(w);
+      const k1 = new KeyboardEvent('keydown', { code: 'KeyA', bubbles: true, cancelable: true }); c.dispatchEvent(k1);
+      c.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyA', bubbles: true, cancelable: true }));
+      return [w.defaultPrevented, k1.defaultPrevented];`);
+    await sleep(1200);
+    const L = sinkLines();
+    ok(L.some((x) => /^move 12[78]\d /.test(x)) && L.includes('mouse 2 0') && L.includes('mouse 4 0'), `캔버스 가운데 클릭이 원격 화면 가운데(좌표 비율)로 전달됨: ${L.join(" | ")}`);
+    ok(L.includes('mouse 2048 -120'), '휠 전달');
+    ok(L.includes('key 65 0') && L.includes('key 65 2'), 'A 키 누름·뗌 전달 (KeyA → VK 65)');
+    ok(prevented[0] === true && prevented[1] === true, '조종 중에는 브라우저 기본 동작(스크롤·단축키)을 막아 원격 PC 로만 보냄');
+    await tab.evaluate(`document.getElementById('remoteCtl').click(); 1`); await sleep(1500);
+    c0 = await ctl();
+    ok(c0.text === '조종 켜기' && !c0.on && !c0.stage, '단추를 다시 누르면 조종이 꺼짐');
+    const n = sinkLines().length;
+    await fire(`c.dispatchEvent(new MouseEvent('mousedown', { clientX: cx, clientY: cy, button: 0, bubbles: true })); return 1;`); await sleep(500);
+    ok(sinkLines().length === n, '끈 뒤에는 입력이 전송되지 않음');
 
     // 에이전트를 끈다
     agent.kill(); await sleep(2500);

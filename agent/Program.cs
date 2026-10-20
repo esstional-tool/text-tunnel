@@ -1,9 +1,11 @@
-// text-tunnel 원격조종 에이전트 (이슈 #17, 1단계: 화면 보기)
+// text-tunnel 원격조종 에이전트 (이슈 #17 화면 보기, #21 PIN, #23 마우스·키보드 조종)
 // 조종당하는 PC 에서 도는 작은 프로그램. 메신저와 같은 짝 열쇠를 가진 브라우저가 들어오면 화면을 JPEG 로 보낸다.
 //
 //   처음 한 번:  remote-agent.exe --code ABC123            (메신저 앱 메뉴 → 새 기기 연결 의 코드)
 //   그다음부터:  remote-agent.exe                          (저장된 열쇠로 자동 연결)
 //   PIN:         트레이 메뉴 → 접속 PIN 설정…  (또는 --set-pin 123456)   ← PIN 을 정하기 전에는 아무도 볼 수 없다
+//   조종:        트레이 메뉴 → 원격 조종 허용 (또는 --allow-control / --deny-control). 기본은 꺼짐 = 보기만 된다
+//   즉시 중지:   Ctrl+Alt+F12, 트레이 메뉴, 또는 설정 폴더에 panic.now 파일 만들기
 //   옵션:        --server https://…  --config <폴더>  --quiet (접속 알림 토스트·소리 끄기, 띠는 그대로 — 시험용)
 //
 // 안전장치 (무인 접속이라 필수)
@@ -12,6 +14,8 @@
 //   · 보기 시작하는 순간 토스트 + 소리, 끝나면 토스트 — 이 PC 앞에 있는 사람에게만 (보는 쪽에는 알림 없음)
 //   · 보는 사람이 없으면 화면을 찍지도 보내지도 않음
 //   · 같은 짝 열쇠를 가진 기기가 **이 PC 의 주인이 정한 PIN** 까지 맞춰야 볼 수 있음 (PIN 은 이 PC 에만 해시로 저장, 5번 틀리면 10분 잠금)
+//   · 조종(마우스·키보드)은 보기와 별개: 이 PC 의 주인이 "원격 조종 허용"을 켜야 하고(기본 꺼짐), 보는 사람이 또 "조종 켜기"를 눌러야 함.
+//     조종 중에는 띠가 "원격 조종 중"으로 바뀜. 즉시 중지: 전역 단축키 Ctrl+Alt+F12 또는 트레이 "조종 즉시 중지" → 조종 허용이 꺼지고 눌려 있던 키·버튼도 모두 뗌
 //   · 접속 성공·실패·잠금은 이 PC 의 access.log 에 기록 (PIN·열쇠·화면은 기록하지 않음), 틀린 시도는 토스트로 알림
 //
 // 빌드: build-agent.cmd (Windows 내장 csc.exe, C# 5 — 문자열 보간·?. 같은 새 문법은 못 씀)
@@ -34,6 +38,12 @@ static class Native
     // 화면 배율(DPI)이 150% 같은 PC 에서도 실제 픽셀 크기로 찍으려면 필요하다
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, int data, UIntPtr extra);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint type);
+    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint mods, uint vk);
+    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 }
 
 static class Json
@@ -149,6 +159,82 @@ static class Capture
     }
 }
 
+// 마우스·키보드 입력을 이 PC 에 넣는다 (이슈 #23). 좌표는 화면 비율(0~1) → 주 모니터 실제 픽셀
+// 누르고 있는 키·버튼을 기억해 두었다가, 조종이 꺼지면 모두 뗀다 (키가 눌린 채로 남는 사고 방지)
+static class Inject
+{
+    static readonly object Gate = new object();
+    // 시험용: --input-sink <파일> 이면 실제로 입력을 넣지 않고 "무슨 입력을 넣었을 것인지"만 파일에 적는다 (화면이 잠긴 PC·자동 시험에서 전체 경로를 확인하려고)
+    public static string Sink;
+    static bool enabled = false; // 조종이 허용·켜진 동안만 true. ReleaseAll 이 같은 잠금 안에서 false 로 만들어, 끄는 순간과 입력 적용이 엇갈려도 키가 남지 않는다
+    public static void Enable() { lock (Gate) enabled = true; }
+    static void Rec(string s) { File.AppendAllText(Sink, s + "\n"); }
+    static void Cur(int x, int y) { if (Sink != null) Rec("move " + x + " " + y); else Native.SetCursorPos(x, y); }
+    static void Mouse(uint flags, int data) { if (Sink != null) Rec("mouse " + flags + " " + data); else Native.mouse_event(flags, 0, 0, data, UIntPtr.Zero); }
+    static void Key(int vk, uint flags) { if (Sink != null) Rec("key " + vk + " " + flags); else Native.keybd_event((byte)vk, (byte)Native.MapVirtualKey((uint)vk, 0), flags, UIntPtr.Zero); }
+    static readonly Dictionary<int, bool> keysDown = new Dictionary<int, bool>(); // 키 -> 확장 키 여부 (뗄 때 같은 플래그가 필요)
+    static readonly HashSet<int> buttonsDown = new HashSet<int>();
+    static readonly uint[] Down = { 0x0002, 0x0008, 0x0020 }, Up = { 0x0004, 0x0010, 0x0040 }; // 왼쪽·오른쪽·가운데
+    static int BtnIndex(int b) { return b == 0 ? 0 : (b == 2 ? 1 : 2); } // 브라우저 버튼 번호: 0 왼쪽, 1 가운데, 2 오른쪽
+
+    static double D(object o) { return Convert.ToDouble(o); }
+    static void MoveTo(object xo, object yo)
+    {
+        Rectangle b = Screen.PrimaryScreen.Bounds;
+        int x = b.X + (int)Math.Round(Math.Max(0, Math.Min(1, D(xo))) * (b.Width - 1));
+        int y = b.Y + (int)Math.Round(Math.Max(0, Math.Min(1, D(yo))) * (b.Height - 1));
+        Cur(x, y);
+    }
+
+    public static void Apply(object[] events)
+    {
+        if (events == null) return;
+        lock (Gate)
+            for (int i = 0; enabled && i < events.Length && i < 200; i++)
+            {
+                Dictionary<string, object> e = events[i] as Dictionary<string, object>;
+                if (e == null || !e.ContainsKey("t")) continue;
+                try { One(e); } catch (Exception) { }
+            }
+    }
+    static void One(Dictionary<string, object> e)
+    {
+        string t = (string)e["t"];
+        if (t == "m") MoveTo(e["x"], e["y"]);
+        else if (t == "d" || t == "u")
+        {
+            MoveTo(e["x"], e["y"]);
+            int bi = BtnIndex(Convert.ToInt32(e["b"]));
+            if (t == "d") { buttonsDown.Add(bi); Mouse(Down[bi], 0); }
+            else { buttonsDown.Remove(bi); Mouse(Up[bi], 0); }
+        }
+        else if (t == "w")
+        {
+            int dy = Convert.ToInt32(e["dy"]), dx = Convert.ToInt32(e["dx"]);
+            if (dy != 0) Mouse(0x0800, Math.Max(-1200, Math.Min(1200, -dy * 120 / 100)));
+            if (dx != 0) Mouse(0x1000, Math.Max(-1200, Math.Min(1200, dx * 120 / 100)));
+        }
+        else if (t == "k")
+        {
+            int vk = Convert.ToInt32(e["vk"]); if (vk < 1 || vk > 254) return;
+            bool down = Convert.ToInt32(e["d"]) != 0, ext = Convert.ToInt32(e["e"]) != 0;
+            if (down) keysDown[vk] = ext; else keysDown.Remove(vk);
+            Key(vk, (ext ? 1u : 0u) | (down ? 0u : 2u));
+        }
+        else if (t == "r") ReleaseAll();
+    }
+
+    public static void ReleaseAll()
+    {
+        lock (Gate)
+        {
+            foreach (KeyValuePair<int, bool> kv in new List<KeyValuePair<int, bool>>(keysDown)) Key(kv.Key, 2u | (kv.Value ? 1u : 0u));
+            foreach (int bi in new List<int>(buttonsDown)) Mouse(Up[bi], 0);
+            keysDown.Clear(); buttonsDown.Clear(); enabled = false;
+        }
+    }
+}
+
 // PIN 은 이 PC 의 주인이 정한다. 해시(PBKDF2 + 무작위 솔트)로만 이 PC 에 저장하고, 서버로는 절대 보내지 않는다.
 // 서버가 전달해 준 "보는 사람이 입력한 PIN" 을 에이전트가 여기서 직접 맞는지 확인한다.
 static class PinStore
@@ -251,9 +337,34 @@ class Banner : Form
     {
         if (Visible && IsHandleCreated) Native.SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010 | 0x0040);
     }
-    public void SetCount(int n)
+    public void SetCount(int n, int controllers)
     {
-        label.Text = "● 원격 접속 중 (" + n + "명이 이 화면을 보고 있어요) — 트레이 아이콘에서 끌 수 있어요";
+        if (controllers > 0)
+        {
+            BackColor = Color.FromArgb(170, 20, 90);
+            label.Text = "● 원격 조종 중 (" + n + "명이 보고, " + controllers + "명이 조종) — 즉시 중지: Ctrl+Alt+F12 또는 트레이 아이콘";
+        }
+        else
+        {
+            BackColor = Color.FromArgb(200, 30, 30);
+            label.Text = "● 원격 접속 중 (" + n + "명이 이 화면을 보고 있어요) — 트레이 아이콘에서 끌 수 있어요";
+        }
+    }
+
+    // 전역 단축키 Ctrl+Alt+F12 = "조종 즉시 중지" (이슈 #23). 어느 창이 앞에 있든 동작
+    public event Action PanicKey;
+    const int HotkeyId = 0x7C01;
+    public bool HotkeyOk;
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        HotkeyOk = Native.RegisterHotKey(Handle, HotkeyId, 0x0002 | 0x0001 | 0x4000, 0x7B); // CTRL | ALT | NOREPEAT, F12
+    }
+    protected override void OnHandleDestroyed(EventArgs e) { Native.UnregisterHotKey(Handle, HotkeyId); base.OnHandleDestroyed(e); }
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == 0x0312 && (int)m.WParam == HotkeyId) { Action a = PanicKey; if (a != null) a(); return; }
+        base.WndProc(ref m);
     }
 }
 
@@ -263,15 +374,20 @@ class AgentContext : ApplicationContext
     readonly Server server; readonly string key; readonly string name; readonly bool quiet; readonly string dir;
     const int MaxFails = 5; static readonly TimeSpan LockFor = TimeSpan.FromMinutes(10);
     int pinFails = 0; DateTime lockedUntil = DateTime.MinValue; // 메모리에만 — 에이전트를 껐다 켜면 초기화
-    int lastViewers = 0; // 알림용: 보는 사람 수가 달라진 순간을 알아채려고
+    int lastViewers = 0, lastControllers = 0; // 알림용: 보는 사람 수가 달라진 순간을 알아채려고
     readonly NotifyIcon tray = new NotifyIcon();
     readonly Banner banner = new Banner();
     readonly ToolStripMenuItem toggle = new ToolStripMenuItem();
     readonly ToolStripMenuItem info = new ToolStripMenuItem();
     readonly ToolStripMenuItem fpsInfo = new ToolStripMenuItem();
     volatile bool on = true, quit = false;
-    volatile int viewers = 0;
+    volatile int viewers = 0, controllers = 0;
+    volatile bool allowControl = false;
+    readonly HashSet<string> authedVids = new HashSet<string>(); // 이 에이전트가 PIN 을 직접 확인해 통과시킨 보는 사람들 (입력은 이들만)
+    readonly ToolStripMenuItem controlItem = new ToolStripMenuItem();
     volatile string token;
+    volatile bool controlReported = false;
+    readonly object controlPostGate = new object();
     volatile HttpWebRequest events;
     volatile int framesSent, lastKb;
 
@@ -285,13 +401,19 @@ class AgentContext : ApplicationContext
         toggle.Click += delegate { SetOn(!on); };
         ToolStripMenuItem pinItem = new ToolStripMenuItem("접속 PIN 설정…");
         pinItem.Click += delegate { SetPinFromMenu(); };
+        controlItem.Click += delegate { SetControl(!allowControl, "트레이 메뉴"); };
+        ToolStripMenuItem panic = new ToolStripMenuItem("조종 즉시 중지 (Ctrl+Alt+F12)");
+        panic.Click += delegate { Panic("트레이 메뉴"); };
+        banner.PanicKey += delegate { Panic("단축키 Ctrl+Alt+F12"); };
         ToolStripMenuItem exit = new ToolStripMenuItem("종료");
         exit.Click += delegate { Quit(); };
         ContextMenuStrip menu = new ContextMenuStrip();
-        menu.Items.AddRange(new ToolStripItem[] { info, fpsInfo, new ToolStripSeparator(), pinItem, toggle, exit });
+        menu.Items.AddRange(new ToolStripItem[] { info, fpsInfo, new ToolStripSeparator(), pinItem, controlItem, panic, toggle, exit });
         tray.ContextMenuStrip = menu; tray.Icon = SystemIcons.Shield; tray.Visible = true;
         tray.DoubleClick += delegate { SetOn(!on); };
+        allowControl = File.Exists(ControlFile(dir));
         Refresh();
+        if (!banner.HotkeyOk) AccessLog.Write("경고: 즉시 중지 단축키(Ctrl+Alt+F12)를 등록하지 못했어요 (다른 프로그램이 사용 중) — 트레이 메뉴로 끌 수 있어요");
         if (!quiet)
         {
             if (PinStore.Exists(dir)) tray.ShowBalloonTip(3000, "text-tunnel 원격", "켜졌어요. 트레이 아이콘에서 끌 수 있어요.", ToolTipIcon.Info);
@@ -304,8 +426,48 @@ class AgentContext : ApplicationContext
         t.Tick += delegate { Refresh(); }; t.Start();
     }
 
+    public static string ControlFile(string dir) { return Path.Combine(dir, "control.on"); }
+
+    // 조종 허용 켜기/끄기. 끄면 눌려 있던 키·버튼을 모두 떼고 서버(보는 사람들)에게도 즉시 알린다
+    public void SetControl(bool value, string why)
+    {
+        if (allowControl == value) return;
+        allowControl = value;
+        try { if (value) File.WriteAllText(ControlFile(dir), "on"); else if (File.Exists(ControlFile(dir))) File.Delete(ControlFile(dir)); } catch (Exception) { }
+        if (!value) Inject.ReleaseAll();
+        AccessLog.Write(value ? "조종 허용을 켰어요 (" + why + ")" : "조종 허용을 껐어요 (" + why + ")");
+        ReportControl();
+        UI(new Action(Refresh));
+    }
+    void Panic(string why)
+    {
+        Inject.ReleaseAll();
+        AccessLog.Write("조종 즉시 중지 (" + why + ")");
+        if (allowControl) SetControl(false, why);
+        else ReportControl();
+        if (!quiet) UI(new Action(delegate { tray.ShowBalloonTip(3000, "조종을 중지했어요", "다시 허용하려면 트레이 메뉴 → 원격 조종 허용", ToolTipIcon.Info); }));
+    }
+    void ReportControl()
+    {
+        string t = token; if (t == null) return;
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            lock (controlPostGate) // 순서가 뒤바뀌지 않게 한 번에 하나씩, 실패하면 몇 번 다시 시도 (최신 상태만 보낸다)
+                for (int i = 0; i < 4; i++)
+                {
+                    try { server.PostJson("/api/remote/agent/control?token=" + Uri.EscapeDataString(t), new Dictionary<string, object> { { "allowed", allowControl } }); break; }
+                    catch (Exception) { Thread.Sleep(400); }
+                }
+        });
+    }
+
+    // "panic.now" 파일이 생기면 조종을 즉시 끈다 (스크립트·원격 셸에서 echo > panic.now). 끄는 방향 전용이라 안전하다
+    string PanicFile { get { return Path.Combine(dir, "panic.now"); } }
+
     void Refresh()
     {
+        if (File.Exists(PanicFile)) { try { File.Delete(PanicFile); } catch (Exception) { } Panic("panic.now 파일"); }
+        controlItem.Text = "원격 조종 허용 (마우스·키보드)"; controlItem.Checked = allowControl;
         toggle.Text = on ? "원격 허용 끄기 (OFF)" : "원격 허용 켜기 (ON)";
         info.Text = !on ? "꺼짐 — 아무도 볼 수 없어요"
             : (!PinStore.Exists(dir) ? "PIN 을 정해야 볼 수 있어요"
@@ -315,7 +477,7 @@ class AgentContext : ApplicationContext
         tray.Text = "text-tunnel 원격: " + (!on ? "꺼짐" : (viewers > 0 ? "보는 중 " + viewers + "명" : "대기 중"));
         bool show = on && viewers > 0;
         if (show != banner.Visible) { if (show) banner.Show(); else banner.Hide(); }
-        if (show) { banner.SetCount(viewers); banner.KeepOnTop(); } // 1초마다 불리므로 덮여도 곧 복구
+        if (show) { banner.SetCount(viewers, allowControl ? controllers : 0); banner.KeepOnTop(); } // 1초마다 불리므로 덮여도 곧 복구
         Alert(on ? viewers : 0);
     }
 
@@ -323,6 +485,10 @@ class AgentContext : ApplicationContext
     // 보기 시작하는 순간: 토스트 + 소리, 끝나는 순간: 토스트.  --quiet 이면 알림·소리를 끄고 띠만 유지한다 (시험용)
     void Alert(int now)
     {
+        int cNow = (on && allowControl) ? controllers : 0;
+        if (cNow > 0 && lastControllers == 0) AccessLog.Write("조종 시작 (" + cNow + "명)");
+        else if (cNow == 0 && lastControllers > 0) { Inject.ReleaseAll(); AccessLog.Write("조종 끝"); }
+        lastControllers = cNow;
         int before = lastViewers; lastViewers = now;
         if (quiet || now == before) return;
         if (now > before)
@@ -368,6 +534,7 @@ class AgentContext : ApplicationContext
         else if (PinStore.Check(dir, pin))
         {
             good = true; pinFails = 0; reply["ok"] = true;
+            lock (authedVids) authedVids.Add(vid);
             AccessLog.Write("접속 성공");
         }
         else
@@ -401,7 +568,7 @@ class AgentContext : ApplicationContext
 
     void Disconnect()
     {
-        string t = token; token = null; viewers = 0;
+        string t = token; token = null; viewers = 0; controllers = 0; Inject.ReleaseAll();
         HttpWebRequest r = events; if (r != null) { try { r.Abort(); } catch (Exception) { } }
         if (t != null) server.Leave(t);
     }
@@ -420,13 +587,28 @@ class AgentContext : ApplicationContext
             try
             {
                 Dictionary<string, object> j = server.PostJson("/api/remote/agent/join", new Dictionary<string, object> { { "key", key }, { "name", name } });
-                token = (string)j["token"];
+                token = (string)j["token"]; controlReported = false; lock (authedVids) authedVids.Clear();
                 HttpWebRequest r = server.OpenEvents(token); events = r;
                 Server.ReadEvents(r, delegate (Dictionary<string, object> ev)
                 {
-                    if (ev == null) return;
-                    string type = (string)ev["type"];
-                    if (type == "viewers") { viewers = Convert.ToInt32(ev["count"]); UI(new Action(Refresh)); }
+                    if (ev == null || !ev.ContainsKey("type")) return;
+                    string type = ev["type"] as string;
+                    if (type == "viewers")
+                    {
+                        viewers = Convert.ToInt32(ev["count"]);
+                        int newCtl = ev.ContainsKey("controllers") ? Convert.ToInt32(ev["controllers"]) : 0;
+                        if (newCtl < controllers) Inject.ReleaseAll(); // 한 명이라도 조종을 끄면 눌려 있던 것을 바로 뗀다 (다음 입력이 오면 다시 누르게 됨)
+                        controllers = newCtl;
+                        if (allowControl && newCtl > 0) Inject.Enable();
+                        UI(new Action(Refresh));
+                        if (!controlReported) { controlReported = true; ReportControl(); } // 연결 직후 한 번: 이 PC 의 조종 허용 상태를 알림
+                    }
+                    else if (type == "input")
+                    {
+                        // 조종이 허용되어 있고, 이 에이전트가 PIN 을 확인해 준 보는 사람의 입력만 넣는다 (서버를 믿지 않고 여기서도 확인)
+                        string ivid = ev.ContainsKey("vid") ? ev["vid"] as string : null; bool known = false; if (ivid == null) return; lock (authedVids) known = authedVids.Contains(ivid);
+                        if (on && allowControl && known && controllers > 0) Inject.Apply(ev["ev"] as object[]);
+                    }
                     else if (type == "auth")
                     {
                         string vid = (string)ev["vid"], pin = (string)ev["pin"];
@@ -435,7 +617,7 @@ class AgentContext : ApplicationContext
                 });
             }
             catch (Exception) { }
-            viewers = 0; token = null; UI(new Action(Refresh));
+            viewers = 0; controllers = 0; token = null; Inject.ReleaseAll(); lock (authedVids) authedVids.Clear(); UI(new Action(Refresh));
             for (int i = 0; i < 20 && !quit && on; i++) Thread.Sleep(100);
         }
     }
@@ -507,6 +689,9 @@ static class Program
         string key = File.ReadAllText(keyFile, Encoding.ASCII).Trim();
         bool quiet = Array.IndexOf(args, "--quiet") >= 0;
         AccessLog.Dir = dir;
+        if (Array.IndexOf(args, "--allow-control") >= 0) { File.WriteAllText(AgentContext.ControlFile(dir), "on"); AccessLog.Write("조종 허용을 켰어요 (--allow-control)"); }
+        if (Array.IndexOf(args, "--deny-control") >= 0) { if (File.Exists(AgentContext.ControlFile(dir))) File.Delete(AgentContext.ControlFile(dir)); AccessLog.Write("조종 허용을 껐어요 (--deny-control)"); }
+        Inject.Sink = Arg(args, "--input-sink"); // 시험용
         string setPin = Arg(args, "--set-pin");
         if (setPin != null)
         {

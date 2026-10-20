@@ -106,6 +106,11 @@ input, textarea { font: inherit; color: var(--text); }
 .remote { height: 100dvh; display: flex; flex-direction: column; background: var(--bg); }
 .remote header { display: flex; align-items: center; gap: 4px; padding: 8px 8px 8px 8px; padding-top: max(8px, env(safe-area-inset-top)); background: var(--bar); border-bottom: .5px solid var(--line); }
 .remote-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; background: #0b0b0d; overflow: hidden; }
+.remote-ctl { margin-left: auto; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 999px; padding: 6px 12px; font-weight: 600; font-size: 13px; font-family: inherit; cursor: pointer; }
+.remote-ctl:disabled { opacity: .5; cursor: not-allowed; }
+.remote-ctl.on { background: #b3125a; border-color: #b3125a; color: #fff; }
+.remote-stage canvas:focus { outline: none; }
+.remote-stage.ctl canvas { cursor: crosshair; box-shadow: 0 0 0 2px #b3125a; }
 .remote-stage canvas { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .remote-empty { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; text-align: center; padding: 24px; color: #d0d0d6; }
 .remote-empty .empty-sub { color: #9a9aa2; }
