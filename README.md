@@ -64,10 +64,18 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 - **설치**: 앱 메뉴 → 방문 기록 지우기 → zip 받기 → 압축 풀기 → `edge://extensions`(또는 `chrome://extensions`) → 개발자 모드 → 압축 풀린 폴더 로드. **앱을 설치한 브라우저에 설치**해야 함
 - **자동 업데이트 안 됨** — 새 버전이 나오면 앱 화면에 안내. zip 다시 받아 기존 폴더에 덮어쓰고 확장 페이지에서 새로고침
 
-### 6. 앱 메뉴 (⋯)
-새 기기 연결(QR·코드) · 대화 지우기 · 방문 기록 지우기(PC) · 앱으로 설치 · 이 기기 이름 바꾸기 · 연결 해제
+### 6. 원격 화면 보기 (1단계: 보기만, 이슈 #17)
+내 노트북 화면을 다른 내 PC 브라우저에서 본다. 조작(마우스·키보드)은 2단계.
+- **노트북에서 에이전트 실행**: `agentuild-agent.cmd` 로 빌드 (Windows 에 내장된 컴파일러라 설치 불필요, `agentemote-agent.exe` 생성) → 처음 한 번 `remote-agent.exe --code ABC123` (메신저 메뉴 → 새 기기 연결 의 코드, 같은 짝 열쇠를 받음) → 그다음부터는 `remote-agent.exe` 만. 시계 옆 트레이 아이콘에서 ON/OFF·종료
+- **보는 PC**: 메신저 메뉴 → **원격 화면 보기** → 초당 프레임·한 장 크기·KB/s 가 함께 표시됨
+- **안전장치**: 보는 동안 노트북 화면 맨 위에 **빨간 "원격 접속 중" 띠**가 항상 떠 있음 · 보는 사람이 없으면 화면을 찍지도 보내지도 않음 · 트레이에서 언제든 OFF · 같은 짝 열쇠를 가진 기기만 볼 수 있음
+- **기록**: 화면은 서버 메모리에 **최신 한 장만** 덮어쓰며 저장하지 않음 (보는 사람이 없으면 받지도 않음)
+- 서버 코드는 `remote/server.js` (`/api/remote/*`), 보는 화면은 `public/remote.js`, 에이전트(C#)는 `agent/` — 메신저와 분리된 모듈
 
-### 7. 기타
+### 7. 앱 메뉴 (⋯)
+새 기기 연결(QR·코드) · 대화 지우기 · 원격 화면 보기(PC) · 방문 기록 지우기(PC) · 앱으로 설치 · 이 기기 이름 바꾸기 · 연결 해제
+
+### 8. 기타
 - 휴대폰·PC 같은 화면, 다크 모드 자동
 - 홈 화면·바탕화면 아이콘으로 설치 (PWA). 작업 표시줄 아이콘이 싫으면 `edge://apps` 에서 '창으로 열기' 끄기
 - 서버를 업데이트하면 앱을 다시 열 때 자동 적용 (확장만 수동)
@@ -95,13 +103,18 @@ Windows 에서는 `start.cmd` 더블클릭. 화면만 보려면 `http://localhos
 ## 시험
 
 ```
-node tests/pair.test.js http://localhost:8787                   # 짝 맺기 16항목
+node tests/pair.test.js http://localhost:8787                   # 짝 맺기 16항목 (⚠ 마지막 항목이 IP 를 10분간 차단 — 에이전트 시험보다 **나중에**, 또는 그 사이 서버 재시작)
 node tests/upload.test.js http://localhost:8787                 # 업로드 이어 올리기 9항목
 SKIP_RL=1 node tests/pair.test.js https://text-tunnel.onrender.com  # 실제 서버 (IP 차단 시험 제외)
 STALE_SEC=3 node server.js   # 다른 터미널에서 띄운 뒤
 node tests/rejoin.test.js http://localhost:8787                 # 유령 자리 정리 6항목
 REPLAY_SEC=3 node server.js  # 다른 터미널에서 띄운 뒤
 node tests/replay.test.js http://localhost:8787                 # 놓친 메시지 다시 받기 10항목
+node tests/remote.test.js http://localhost:8787                 # 원격 서버 26항목 (가짜 에이전트)
+# Windows 전용 — agentuild-agent.cmd 로 빌드한 뒤. 에이전트가 이 PC 화면을 로컬 서버로 보냄:
+node tests/remote-agent.test.js http://localhost:8787           # 진짜 에이전트 13항목
+# 위 둘 + Edge 를 --remote-debugging-port=9333 으로 띄운 뒤:
+node tests/remote-ui.test.js http://localhost:8787              # 보는 화면 12항목
 ```
 
 ## Render 배포
