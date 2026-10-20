@@ -523,9 +523,10 @@ function clearList() {
 async function clearChat() {
   closeSheets();
   if (DEMO) { clearList(); return toast('대화를 지웠어요'); }
-  const r = await fetch(api('clear'), { method: 'POST' }).catch(() => null);
-  if (!r?.ok) toast('지우지 못했어요. 연결을 확인해 주세요');
-  // 화면은 서버가 보내는 'clear' 알림을 받아 양쪽에서 같이 비운다
+  const r = token ? await fetch(api('clear'), { method: 'POST' }).catch(() => null) : null;
+  // 연결돼 있으면 화면은 서버가 보내는 'clear' 알림을 받아 양쪽에서 같이 비운다.
+  // 연결이 끊겼으면 적어도 이 화면은 바로 비운다
+  if (!r?.ok) { clearList(); toast('이 화면만 지웠어요 · 연결이 끊겨 상대 화면은 그대로예요'); }
 }
 
 function askConfirm(title, sub, okText, onOk) {
@@ -740,6 +741,12 @@ $('extWipe').onclick = () => askConfirm('완전 정리할까요?', '양쪽 대�
 $('mUnpair').onclick = () => askConfirm('연결을 해제할까요?', '이 기기에서 연결 정보가 지워져요. 다시 쓰려면 QR로 새로 연결해야 해요.', '연결 해제', unpair);
 $('mClear').onclick = () => askConfirm('대화를 지울까요?', '양쪽 화면의 대화와 서버에 남은 사진·파일을 바로 지워요. 되돌릴 수 없어요.', '대화 지우기', clearChat);
 $('mClose').onclick = closeSheets;
+// 헤더 휴지통: 확인 없이 바로 양쪽 대화·서버 파일 삭제
+$('trashBtn').onclick = () => {
+  if (!$('scroller').classList.contains('has-msgs') && !tray.length) return toast('지울 대화가 없어요');
+  clearTray();
+  clearChat();
+};
 $('confirmCancel').onclick = closeSheets;
 for (const s of ['menu', 'confirm']) $(s).onclick = (e) => { if (e.target === $(s)) closeSheets(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheets(); });
