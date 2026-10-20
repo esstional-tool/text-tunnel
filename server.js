@@ -17,6 +17,8 @@ const PAIR_TTL = 5 * 60 * 1000;     // 짝 코드 유효 시간
 const GRACE = 30 * 1000;            // 연결이 끊긴 기기를 기다려 주는 시간 (화면 꺼짐·새로고침)
 const STALE = (Number(process.env.STALE_SEC) || 90) * 1000;          // 이만큼 살아 있다는 신호가 없으면, 방이 꽉 찼을 때 자리를 내준다
 const CHUNK_MAX = 16 * 1024 * 1024; // 브라우저는 8MB씩 보낸다. 여유를 둔 상한
+const REPLAY = (Number(process.env.REPLAY_SEC) || 120) * 1000; // 끊겼다 다시 연결된 기기에 다시 보내 줄 최근 이벤트 보관 시간 (메모리만)
+const REPLAY_MAX = 300;                                          // 방마다 최대 보관 개수
 const PUB = path.join(__dirname, 'public');
 
 const rooms = new Map();  // roomId -> { members: Map<token, Member>, files: Map, uploads: Map }
@@ -52,9 +54,33 @@ function removeMember(room, token) {
   else presence(room);
 }
 
+// 메시지·파일·대화 지우기는 다시 보내 줄 수 있게 번호를 붙여 방의 최근 이벤트 줄(log)에 보관한다.
+// 번호는 '방 시작 표시:순번' — 방이 사라졌다 새로 생기면 시작 표시가 달라져 옛 번호와 섞이지 않는다
+const REPLAYABLE = new Set(['msg', 'file', 'clear']);
 function broadcast(room, ev) {
-  const line = `data: ${JSON.stringify(ev)}\n\n`;
+  let head = '';
+  if (REPLAYABLE.has(ev.type)) {
+    ev.mid ??= crypto.randomUUID();
+    head = `id: ${room.epoch}:${++room.seq}\n`;
+    if (ev.type === 'clear') room.log = []; // 지운 대화가 다시 보내지는 일이 없게
+  }
+  const line = `${head}data: ${JSON.stringify(ev)}\n\n`;
+  if (head) { room.log.push({ seq: room.seq, at: Date.now(), line }); trimLog(room); }
   for (const m of room.members.values()) m.res?.write(line);
+}
+
+function trimLog(room) {
+  const old = Date.now() - REPLAY;
+  while (room.log.length && (room.log[0].at < old || room.log.length > REPLAY_MAX)) room.log.shift();
+}
+
+// 다시 연결한 기기에, 마지막으로 받은 번호(last) 이후의 이벤트만 다시 보낸다.
+// 처음 여는 기기(last 없음)나 다른 방의 번호면 보관 중인 것 전부 (= 앱을 닫아 둔 사이 온 메시지)
+function replay(room, res, last) {
+  trimLog(room);
+  const [epoch, seq] = String(last || '').split(':');
+  const after = epoch === room.epoch ? Number(seq) || 0 : 0;
+  for (const e of room.log) if (e.seq > after) res.write(e.line);
 }
 
 function presence(room) {
@@ -246,7 +272,7 @@ const server = http.createServer((req, res) => {
       let room = rooms.get(id);
       if (!room) {
         if (rooms.size >= MAX_ROOMS) return send(res, 429, { error: '서버가 붐벼요. 잠시 뒤에 다시 열어 주세요' });
-        room = { id, members: new Map(), files: new Map(), uploads: new Map() };
+        room = { id, members: new Map(), files: new Map(), uploads: new Map(), epoch: crypto.randomBytes(4).toString('hex'), seq: 0, log: [] };
         rooms.set(id, room);
       }
       // 같은 기기가 다시 들어오면(새로고침·앱 재실행) 이전 자리를 비운다
@@ -259,11 +285,12 @@ const server = http.createServer((req, res) => {
       if (room.members.size >= ROOM_SIZE) return send(res, 409, { error: '이미 두 기기가 연결돼 있어요' });
 
       const token = crypto.randomBytes(24).toString('base64url');
-      const member = { id: crypto.randomUUID(), device, name, res: null, timer: null, seen: Date.now() };
+      const tag = crypto.createHash('sha256').update(device).digest('hex').slice(0, 16); // 이전 접속에서 보낸 내 메시지를 알아보는 표식 (기기 ID 자체는 상대에게 안 보임)
+      const member = { id: crypto.randomUUID(), device, tag, name, res: null, timer: null, seen: Date.now() };
       member.timer = setTimeout(() => removeMember(room, token), GRACE); // 연결을 안 열면 정리
       room.members.set(token, member);
       tokens.set(token, id);
-      send(res, 200, { token, id: member.id });
+      send(res, 200, { token, id: member.id, tag, replaySec: REPLAY / 1000 });
     });
   }
 
@@ -280,6 +307,8 @@ const server = http.createServer((req, res) => {
     member.res?.end(); // 같은 탭이 재접속하면 이전 연결을 정리
     member.res = res;
     presence(room);
+    // 놓친 이벤트 다시 보내기: 브라우저 자동 재연결은 Last-Event-ID 헤더, 앱이 새로 입장할 때는 ?last=
+    replay(room, res, url.searchParams.get('last') || req.headers['last-event-id']);
     const ping = setInterval(() => res.write(': ping\n\n'), 25000);
     req.on('close', () => {
       clearInterval(ping);
@@ -296,7 +325,7 @@ const server = http.createServer((req, res) => {
     for (const f of room.files.values()) { clearTimeout(f.timer); fileBytes -= f.buf.length; }
     for (const u of room.uploads.values()) clearTimeout(u.timer);
     room.files.clear(); room.uploads.clear();
-    broadcast(room, { type: 'clear', from: member.id, name: member.name, at: Date.now() });
+    broadcast(room, { type: 'clear', from: member.id, dev: member.tag, name: member.name, at: Date.now() });
     return send(res, 200, 'ok');
   }
 
@@ -311,7 +340,7 @@ const server = http.createServer((req, res) => {
       let m;
       try { m = JSON.parse(body); } catch { return send(res, 400, 'bad json'); }
       if (typeof m.text !== 'string' || !m.text.trim()) return send(res, 400, 'empty');
-      broadcast(room, { type: 'msg', mid: crypto.randomUUID(), from: member.id, name: member.name, text: m.text, at: Date.now() });
+      broadcast(room, { type: 'msg', mid: crypto.randomUUID(), from: member.id, dev: member.tag, name: member.name, text: m.text, at: Date.now() });
       send(res, 200, 'ok');
     });
   }
@@ -353,7 +382,7 @@ const server = http.createServer((req, res) => {
       fileBytes += file.buf.length;
       file.timer = setTimeout(() => { room.files.delete(fid); fileBytes -= file.buf.length; }, FILE_TTL);
       room.files.set(fid, file);
-      broadcast(room, { type: 'file', mid: crypto.randomUUID(), fid, fname: file.name, mime: file.mime, size: file.buf.length, batch: up.batch, from: member.id, name: member.name, at: Date.now() });
+      broadcast(room, { type: 'file', mid: crypto.randomUUID(), fid, fname: file.name, mime: file.mime, size: file.buf.length, batch: up.batch, from: member.id, dev: member.tag, name: member.name, at: Date.now() });
       send(res, 200, 'done');
     });
   }

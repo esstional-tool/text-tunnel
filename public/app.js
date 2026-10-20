@@ -23,6 +23,10 @@ if (!device) { device = crypto.randomUUID?.() || String(Math.random()).slice(2) 
 
 let token = null;   // 이번 접속의 입장권
 let myId = null;    // 이번 접속에서 내 메시지를 알아보는 ID
+let myTag = null;   // 이 기기의 표식 — 이전 접속에서 보낸 내 메시지도 내 말풍선으로 (서버가 다시 보내 줄 때)
+let replaySec = 120; // 서버가 놓친 메시지를 보관해 주는 시간
+let lastEvent = ''; // 마지막으로 받은 이벤트 번호 — 다시 연결할 때 이 다음부터 받는다
+const seen = new Set(); // 이미 그린 메시지 ID (다시 보내 준 것과 겹치면 건너뜀)
 let others = 0;
 let peers = null;   // 직전 접속 목록 (id -> name). null 이면 아직 첫 수신 전
 let unread = 0;
@@ -154,13 +158,14 @@ async function joinRoom() {
     if (r.status === 409 || r.status === 429) setTimeout(joinRoom, 15000);
     return;
   }
-  token = j.token; myId = j.id; peers = null;
+  token = j.token; myId = j.id; myTag = j.tag || null; replaySec = j.replaySec || replaySec; peers = null;
   connect();
 }
 
 function connect() {
   es?.close();
-  es = new EventSource(api('events'));
+  // 마지막으로 받은 번호를 알려 주면, 끊겨 있던 동안 온 메시지를 서버가 다시 보내 준다
+  es = new EventSource(api('events', lastEvent ? { last: lastEvent } : {}));
   es.onerror = async () => {
     setStatus('off');
     // 서버가 재시작됐거나 방이 정리됐으면 다시 들어간다
@@ -169,8 +174,14 @@ function connect() {
   };
   es.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
+    if (ev.lastEventId) lastEvent = ev.lastEventId;
+    if (m.mid) {
+      if (seen.has(m.mid)) return; // 다시 보내 준 것 중 이미 받은 것
+      seen.add(m.mid);
+      if (seen.size > 2000) seen.delete(seen.values().next().value);
+    }
     if (m.type === 'presence') onPresence(m.users);
-    else if (m.type === 'clear') { clearList(); toast(m.from === myId ? '대화를 지웠어요' : `${m.name}에서 대화를 지웠어요`); }
+    else if (m.type === 'clear') { clearList(); toast(isMine(m) ? '대화를 지웠어요' : `${m.name}에서 대화를 지웠어요`); }
     else add(m);
   };
 }
@@ -224,9 +235,12 @@ const svg = (d) => { const s = document.createElementNS('http://www.w3.org/2000/
 const ICON_FILE = 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5';
 const ICON_DOWN = 'M12 4v12M6 11l6 6 6-6M5 20h14';
 
+// 이번 접속에서 보냈거나(from), 이 기기가 이전 접속에서 보낸 것(dev 표식)이면 내 메시지
+const isMine = (m) => m.from === myId || (!!myTag && m.dev === myTag);
+
 // 같은 사람이 같은 분에 연달아 보내면 이름·시간을 한 번만 보여주는 카톡식 묶음
 function row(m) {
-  const mine = m.from === myId;
+  const mine = isMine(m);
   const li = el('li', `row ${mine ? 'mine' : 'theirs'}`);
   li.dataset.group = `${m.from}|${Math.floor(m.at / 60000)}`;
   const prev = $('list').lastElementChild;
@@ -336,7 +350,7 @@ function add(m) {
 
   line.append(bubble, el('time', null, fmtTime(m.at)));
   place(li);
-  if (m.from !== myId && document.hidden) { unread++; document.title = `(${unread}) Text Tunnel`; }
+  if (!isMine(m) && document.hidden) { unread++; document.title = `(${unread}) Text Tunnel`; }
 }
 
 function sys(text) { place(el('li', 'sys', text)); }
@@ -351,7 +365,7 @@ async function sendText(e) {
   if (DEMO) return add({ type: 'msg', from: myId, text, at: Date.now() });
   const r = await fetch(api('send'), { method: 'POST', body: JSON.stringify({ text }) }).catch(() => null);
   if (!r?.ok) { $('text').value = text; syncInput(); return toast('보내지 못했어요'); }
-  if (!others) toast('상대 기기가 없어서 아무도 받지 못했어요');
+  if (!others) toast(`상대 기기가 꺼져 있어요 · ${Math.round(replaySec / 60) || 1}분 안에 열면 받아요`);
 }
 
 const randId = () => crypto.randomUUID?.() || String(Math.random()).slice(2) + Date.now();
@@ -560,7 +574,7 @@ function rename() {
 function unpair() {
   closeSheets();
   leaveNow();
-  key = null; store.del('tt.key');
+  key = null; store.del('tt.key'); lastEvent = ''; seen.clear(); // 다른 짝과 섞이지 않게
   clearList(); clearTray(); closeAttach();
   show('welcome');
 }
@@ -609,7 +623,7 @@ async function wipeHere() {
   }
   try { for (const k of Object.keys(localStorage)) if (k.startsWith('tt.')) localStorage.removeItem(k); } catch {}
   try { sessionStorage.clear(); } catch {}
-  key = null;
+  key = null; lastEvent = ''; seen.clear();
   clearList(); clearTray(); closeAttach(); closeSheets();
   show('welcome');
 }
