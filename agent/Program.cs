@@ -3,6 +3,7 @@
 //
 //   처음 한 번:  remote-agent.exe --code ABC123            (메신저 앱 메뉴 → 새 기기 연결 의 코드)
 //   그다음부터:  remote-agent.exe                          (저장된 열쇠로 자동 연결)
+//   PIN:         트레이 메뉴 → 접속 PIN 설정…  (또는 --set-pin 123456)   ← PIN 을 정하기 전에는 아무도 볼 수 없다
 //   옵션:        --server https://…  --config <폴더>  --quiet (접속 알림 토스트·소리 끄기, 띠는 그대로 — 시험용)
 //
 // 안전장치 (무인 접속이라 필수)
@@ -10,7 +11,8 @@
 //   · 누군가 화면을 보는 동안 화면 맨 위에 빨간 "원격 접속 중" 띠가 항상 떠 있음 (끌 수 없음, 1초마다 다시 맨 위로)
 //   · 보기 시작하는 순간 토스트 + 소리, 끝나면 토스트 — 이 PC 앞에 있는 사람에게만 (보는 쪽에는 알림 없음)
 //   · 보는 사람이 없으면 화면을 찍지도 보내지도 않음
-//   · 같은 짝 열쇠를 가진 기기만 볼 수 있음
+//   · 같은 짝 열쇠를 가진 기기가 **이 PC 의 주인이 정한 PIN** 까지 맞춰야 볼 수 있음 (PIN 은 이 PC 에만 해시로 저장, 5번 틀리면 10분 잠금)
+//   · 접속 성공·실패·잠금은 이 PC 의 access.log 에 기록 (PIN·열쇠·화면은 기록하지 않음), 틀린 시도는 토스트로 알림
 //
 // 빌드: build-agent.cmd (Windows 내장 csc.exe, C# 5 — 문자열 보간·?. 같은 새 문법은 못 씀)
 using System;
@@ -21,6 +23,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
@@ -146,6 +149,82 @@ static class Capture
     }
 }
 
+// PIN 은 이 PC 의 주인이 정한다. 해시(PBKDF2 + 무작위 솔트)로만 이 PC 에 저장하고, 서버로는 절대 보내지 않는다.
+// 서버가 전달해 준 "보는 사람이 입력한 PIN" 을 에이전트가 여기서 직접 맞는지 확인한다.
+static class PinStore
+{
+    const int Iterations = 100000;
+    static string PinFile(string dir) { return Path.Combine(dir, "pin.dat"); }
+    public static bool Valid(string pin) { return pin != null && System.Text.RegularExpressions.Regex.IsMatch(pin, "^[0-9]{6,12}$"); }
+    public static bool Exists(string dir) { return File.Exists(PinFile(dir)); }
+
+    static byte[] Hash(string pin, byte[] salt)
+    {
+        Rfc2898DeriveBytes d = new Rfc2898DeriveBytes(pin, salt, Iterations);
+        return d.GetBytes(32);
+    }
+    public static void Set(string dir, string pin)
+    {
+        byte[] salt = new byte[16];
+        using (System.Security.Cryptography.RandomNumberGenerator rng = System.Security.Cryptography.RandomNumberGenerator.Create()) rng.GetBytes(salt);
+        File.WriteAllText(PinFile(dir), Convert.ToBase64String(salt) + ":" + Convert.ToBase64String(Hash(pin, salt)), Encoding.ASCII);
+    }
+    public static bool Check(string dir, string pin)
+    {
+        if (!Valid(pin) || !Exists(dir)) return false;
+        string[] parts = File.ReadAllText(PinFile(dir), Encoding.ASCII).Trim().Split(':');
+        byte[] want = Convert.FromBase64String(parts[1]);
+        byte[] got = Hash(pin, Convert.FromBase64String(parts[0]));
+        int diff = 0; // 시간이 일정하게 걸리도록 끝까지 비교한다
+        for (int i = 0; i < want.Length && i < got.Length; i++) diff |= want[i] ^ got[i];
+        return diff == 0 && want.Length == got.Length;
+    }
+}
+
+// 접속 기록: 이 PC 에만 남는 감사용 파일. 시각과 결과만 — PIN·열쇠·화면은 절대 기록하지 않는다
+static class AccessLog
+{
+    static readonly object Gate = new object();
+    public static string Dir;
+    public static void Write(string text)
+    {
+        try
+        {
+            lock (Gate) File.AppendAllText(Path.Combine(Dir, "access.log"), DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + text + Environment.NewLine, Encoding.UTF8);
+        }
+        catch (Exception) { }
+    }
+}
+
+// PIN 설정 창 (트레이 메뉴에서)
+class PinDialog : Form
+{
+    readonly TextBox a = new TextBox(), b = new TextBox();
+    readonly Label msg = new Label();
+    public string Pin;
+    public PinDialog()
+    {
+        Text = "접속 PIN 설정"; FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterScreen;
+        MaximizeBox = false; MinimizeBox = false; ClientSize = new Size(340, 190); TopMost = true;
+        Label l1 = new Label { Text = "다른 PC 가 이 화면을 보려면 입력해야 하는 숫자예요 (6~12자리).", Left = 14, Top = 12, Width = 312, Height = 34 };
+        Label l2 = new Label { Text = "PIN", Left = 14, Top = 56, Width = 80 };
+        Label l3 = new Label { Text = "PIN 한 번 더", Left = 14, Top = 86, Width = 80 };
+        a.Left = 100; a.Top = 52; a.Width = 226; a.UseSystemPasswordChar = true; a.MaxLength = 12;
+        b.Left = 100; b.Top = 82; b.Width = 226; b.UseSystemPasswordChar = true; b.MaxLength = 12;
+        msg.Left = 14; msg.Top = 116; msg.Width = 312; msg.Height = 20; msg.ForeColor = Color.FromArgb(200, 30, 30);
+        Button ok = new Button { Text = "저장", Left = 170, Top = 148, Width = 76 };
+        Button cancel = new Button { Text = "취소", Left = 250, Top = 148, Width = 76, DialogResult = DialogResult.Cancel };
+        ok.Click += delegate
+        {
+            if (!PinStore.Valid(a.Text)) { msg.Text = "6~12자리 숫자로 정해 주세요."; return; }
+            if (a.Text != b.Text) { msg.Text = "두 번 입력한 PIN 이 달라요."; return; }
+            Pin = a.Text; DialogResult = DialogResult.OK;
+        };
+        AcceptButton = ok; CancelButton = cancel;
+        Controls.AddRange(new Control[] { l1, l2, l3, a, b, msg, ok, cancel });
+    }
+}
+
 // 누군가 보는 동안 화면 맨 위에 항상 떠 있는 빨간 띠
 class Banner : Form
 {
@@ -181,7 +260,9 @@ class Banner : Form
 // 트레이 아이콘 + 전체 흐름
 class AgentContext : ApplicationContext
 {
-    readonly Server server; readonly string key; readonly string name; readonly bool quiet;
+    readonly Server server; readonly string key; readonly string name; readonly bool quiet; readonly string dir;
+    const int MaxFails = 5; static readonly TimeSpan LockFor = TimeSpan.FromMinutes(10);
+    int pinFails = 0; DateTime lockedUntil = DateTime.MinValue; // 메모리에만 — 에이전트를 껐다 켜면 초기화
     int lastViewers = 0; // 알림용: 보는 사람 수가 달라진 순간을 알아채려고
     readonly NotifyIcon tray = new NotifyIcon();
     readonly Banner banner = new Banner();
@@ -194,22 +275,28 @@ class AgentContext : ApplicationContext
     volatile HttpWebRequest events;
     volatile int framesSent, lastKb;
 
-    public AgentContext(Server server, string key, string name, bool quiet)
+    public AgentContext(Server server, string key, string name, bool quiet, string dir)
     {
-        this.server = server; this.key = key; this.name = name; this.quiet = quiet;
+        this.server = server; this.key = key; this.name = name; this.quiet = quiet; this.dir = dir;
         banner.Visible = false; banner.Opacity = 1;
         IntPtr unused = banner.Handle; // 핸들을 미리 만들어 둔다 (다른 스레드에서 BeginInvoke 하려고)
 
         info.Enabled = false; fpsInfo.Enabled = false;
         toggle.Click += delegate { SetOn(!on); };
+        ToolStripMenuItem pinItem = new ToolStripMenuItem("접속 PIN 설정…");
+        pinItem.Click += delegate { SetPinFromMenu(); };
         ToolStripMenuItem exit = new ToolStripMenuItem("종료");
         exit.Click += delegate { Quit(); };
         ContextMenuStrip menu = new ContextMenuStrip();
-        menu.Items.AddRange(new ToolStripItem[] { info, fpsInfo, new ToolStripSeparator(), toggle, exit });
+        menu.Items.AddRange(new ToolStripItem[] { info, fpsInfo, new ToolStripSeparator(), pinItem, toggle, exit });
         tray.ContextMenuStrip = menu; tray.Icon = SystemIcons.Shield; tray.Visible = true;
         tray.DoubleClick += delegate { SetOn(!on); };
         Refresh();
-        tray.ShowBalloonTip(3000, "text-tunnel 원격", "켜졌어요. 트레이 아이콘에서 끌 수 있어요.", ToolTipIcon.Info);
+        if (!quiet)
+        {
+            if (PinStore.Exists(dir)) tray.ShowBalloonTip(3000, "text-tunnel 원격", "켜졌어요. 트레이 아이콘에서 끌 수 있어요.", ToolTipIcon.Info);
+            else tray.ShowBalloonTip(6000, "접속 PIN 을 정해 주세요", "PIN 을 정하기 전에는 아무도 이 화면을 볼 수 없어요. 트레이 아이콘 메뉴 → 접속 PIN 설정", ToolTipIcon.Warning);
+        }
 
         new Thread(ConnectLoop) { IsBackground = true }.Start();
         new Thread(CaptureLoop) { IsBackground = true }.Start();
@@ -220,7 +307,10 @@ class AgentContext : ApplicationContext
     void Refresh()
     {
         toggle.Text = on ? "원격 허용 끄기 (OFF)" : "원격 허용 켜기 (ON)";
-        info.Text = !on ? "꺼짐 — 아무도 볼 수 없어요" : (viewers > 0 ? "보는 중: " + viewers + "명" : "켜짐 — 대기 중");
+        info.Text = !on ? "꺼짐 — 아무도 볼 수 없어요"
+            : (!PinStore.Exists(dir) ? "PIN 을 정해야 볼 수 있어요"
+            : (DateTime.UtcNow < lockedUntil ? "PIN 을 너무 많이 틀려 잠겨 있어요"
+            : (viewers > 0 ? "보는 중: " + viewers + "명" : "켜짐 — 대기 중")));
         fpsInfo.Text = framesSent > 0 ? "보낸 화면 " + framesSent + "장 (마지막 " + lastKb + "KB)" : "아직 보낸 화면 없음";
         tray.Text = "text-tunnel 원격: " + (!on ? "꺼짐" : (viewers > 0 ? "보는 중 " + viewers + "명" : "대기 중"));
         bool show = on && viewers > 0;
@@ -243,6 +333,61 @@ class AgentContext : ApplicationContext
         else if (now == 0)
             tray.ShowBalloonTip(3000, "원격 접속이 끝났어요", "더 이상 이 PC 화면을 보는 사람이 없어요.", ToolTipIcon.Info);
     }
+
+    // PIN 설정 (트레이 메뉴)
+    void SetPinFromMenu()
+    {
+        using (PinDialog d = new PinDialog())
+            if (d.ShowDialog() == DialogResult.OK)
+            {
+                PinStore.Set(dir, d.Pin); pinFails = 0; lockedUntil = DateTime.MinValue;
+                AccessLog.Write("PIN 을 새로 정했어요");
+                if (!quiet) tray.ShowBalloonTip(3000, "접속 PIN 을 저장했어요", "이제 이 PIN 을 아는 사람만 이 화면을 볼 수 있어요.", ToolTipIcon.Info);
+                Refresh();
+            }
+    }
+
+    // 서버가 전달한 "보는 사람이 입력한 PIN" 을 여기서 직접 확인한다 (서버는 PIN 을 저장하지 않고 판정만 중계).
+    // 5번 틀리면 10분 동안 스스로 잠근다 — 잠긴 동안은 맞는 PIN 도 거절
+    void HandleAuth(string vid, string pin)
+    {
+        string t = token; if (t == null) return;
+        Dictionary<string, object> reply = new Dictionary<string, object>();
+        reply["vid"] = vid;
+        bool good = false;
+        if (!PinStore.Exists(dir))
+        {
+            reply["ok"] = false; reply["code"] = "no-pin";
+            AccessLog.Write("접속 거절: PIN 을 아직 정하지 않았어요");
+        }
+        else if (DateTime.UtcNow < lockedUntil)
+        {
+            reply["ok"] = false; reply["code"] = "locked"; reply["locked"] = true; reply["lockedUntil"] = EpochMs(lockedUntil);
+            AccessLog.Write("접속 거절: 잠금 중 (맞는 PIN 이어도 거절)");
+        }
+        else if (PinStore.Check(dir, pin))
+        {
+            good = true; pinFails = 0; reply["ok"] = true;
+            AccessLog.Write("접속 성공");
+        }
+        else
+        {
+            pinFails++;
+            reply["ok"] = false; reply["code"] = "wrong"; reply["left"] = Math.Max(0, MaxFails - pinFails);
+            if (pinFails >= MaxFails)
+            {
+                lockedUntil = DateTime.UtcNow + LockFor; pinFails = 0;
+                reply["code"] = "locked"; reply["locked"] = true; reply["lockedUntil"] = EpochMs(lockedUntil); reply["left"] = 0;
+                AccessLog.Write("접속 실패: PIN 을 " + MaxFails + "번 틀려 " + (int)LockFor.TotalMinutes + "분간 잠금");
+            }
+            else AccessLog.Write("접속 실패: PIN 이 틀렸어요 (남은 횟수 " + (MaxFails - pinFails) + ")");
+            if (!quiet) UI(new Action(delegate { tray.ShowBalloonTip(5000, "누군가 틀린 PIN 으로 접속을 시도했어요", "이 PC 의 PIN 을 모르는 사람일 수 있어요.", ToolTipIcon.Warning); }));
+        }
+        try { server.PostJson("/api/remote/agent/auth?token=" + Uri.EscapeDataString(t), reply); }
+        catch (Exception) { }
+        if (good) UI(new Action(Refresh));
+    }
+    static long EpochMs(DateTime utc) { return (long)(utc - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds; }
 
     void UI(Action a) { if (!banner.IsDisposed && banner.IsHandleCreated) banner.BeginInvoke(a); }
 
@@ -279,7 +424,14 @@ class AgentContext : ApplicationContext
                 HttpWebRequest r = server.OpenEvents(token); events = r;
                 Server.ReadEvents(r, delegate (Dictionary<string, object> ev)
                 {
-                    if (ev != null && (string)ev["type"] == "viewers") { viewers = Convert.ToInt32(ev["count"]); UI(new Action(Refresh)); }
+                    if (ev == null) return;
+                    string type = (string)ev["type"];
+                    if (type == "viewers") { viewers = Convert.ToInt32(ev["count"]); UI(new Action(Refresh)); }
+                    else if (type == "auth")
+                    {
+                        string vid = (string)ev["vid"], pin = (string)ev["pin"];
+                        ThreadPool.QueueUserWorkItem(delegate { HandleAuth(vid, pin); }); // PBKDF2 는 느리므로 알림 수신을 막지 않게 따로
+                    }
                 });
             }
             catch (Exception) { }
@@ -354,7 +506,15 @@ static class Program
         }
         string key = File.ReadAllText(keyFile, Encoding.ASCII).Trim();
         bool quiet = Array.IndexOf(args, "--quiet") >= 0;
-        Application.Run(new AgentContext(server, key, Environment.MachineName, quiet));
+        AccessLog.Dir = dir;
+        string setPin = Arg(args, "--set-pin");
+        if (setPin != null)
+        {
+            if (!PinStore.Valid(setPin)) { MessageBox.Show("PIN 은 6~12자리 숫자여야 해요.", "text-tunnel 원격", MessageBoxButtons.OK, MessageBoxIcon.Warning); return 2; }
+            PinStore.Set(dir, setPin);
+            AccessLog.Write("PIN 을 새로 정했어요 (--set-pin)");
+        }
+        Application.Run(new AgentContext(server, key, Environment.MachineName, quiet, dir));
         return 0;
     }
 }

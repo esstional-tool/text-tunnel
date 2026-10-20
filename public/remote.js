@@ -5,7 +5,8 @@
 // 밀리면 버리기: 한 장을 가져오는 중에 알림이 여러 개 와도 끝난 뒤 "최신 것" 한 번만 다시 가져온다.
 (() => {
   const $r = (id) => document.getElementById(id);
-  const R = { token: null, es: null, fetching: false, again: false, online: false, w: 0, h: 0, seq: 0, stats: [] };
+  const R = { token: null, es: null, fetching: false, again: false, online: false, authed: false, pin: null, w: 0, h: 0, seq: 0, stats: [] };
+  // PIN 은 이 화면의 메모리에만 둔다 (저장 안 함, 새로고침·뒤로 가기에서 사라짐). 연결이 잠깐 끊겨 다시 들어갈 때 자동으로 다시 넣으려는 용도
   SCREENS.push('remoteScreen'); // app.js 의 화면 전환(show)이 이 화면도 알게 한다
 
   const setStatus = (text, state) => { $r('remoteStatus').textContent = text; $r('remoteDot').className = `dot ${state}`; };
@@ -28,10 +29,14 @@
     R.es.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if (m.type === 'agent') {
-        R.online = m.online;
-        setStatus(m.online ? `${m.name || '노트북'} 화면을 받는 중…` : '원격 PC 의 에이전트가 꺼져 있어요', m.online ? 'on' : 'alone');
-        $r('remoteEmpty').hidden = m.online;
-        if (!m.online) clearCanvas();
+        R.online = m.online; R.name = m.name;
+        if (!m.online) { R.authed = false; $r('pinForm').hidden = true; $r('remoteEmpty').hidden = false; clearCanvas(); setStatus('원격 PC 의 에이전트가 꺼져 있어요', 'alone'); return; }
+        $r('remoteEmpty').hidden = true;
+        if (R.authed) { setStatus(`${m.name || '노트북'} 화면을 받는 중…`, 'on'); return; }
+        // 에이전트가 (다시) 켜졌다 — PIN 이 바뀌었을 수 있어 다시 인증해야 한다. 방금 쓴 PIN 이 있으면 한 번만 자동으로 다시 넣는다
+        if (R.pin) { const p = R.pin; R.pin = null; submitPin(p); } else askPin();
+      } else if (m.type === 'auth') {
+        onAuth(m);
       } else if (m.type === 'frame') {
         R.w = m.w; R.h = m.h;
         pull(m.seq);
@@ -42,6 +47,41 @@
       const p = await fetch(`/api/remote/ping?token=${encodeURIComponent(R.token)}`).catch(() => null);
       if (p?.status === 401) { R.es.close(); setTimeout(() => !$r('remoteScreen').hidden && connect(), 800); } // 서버가 재시작돼 입장권이 사라진 경우
     };
+  }
+
+  // ── PIN (이슈 #21): 맞는지는 원격 PC 의 에이전트가 직접 확인한다 ───────────────
+  function askPin(msg) {
+    $r('pinForm').hidden = false; $r('pinMsg').textContent = msg || '';
+    $r('pinInput').disabled = false; $r('pinBtn').disabled = false;
+    setStatus('접속 PIN 을 입력하세요', 'alone');
+    $r('pinInput').focus({ preventScroll: true });
+  }
+  async function submitPin(pin) {
+    $r('pinForm').hidden = false; $r('pinBtn').disabled = true; $r('pinInput').disabled = true; $r('pinMsg').textContent = '원격 PC 가 확인하는 중…';
+    setStatus('PIN 확인하는 중…', 'alone');
+    R.tryPin = pin;
+    const r = await fetch(`/api/remote/view/auth?token=${encodeURIComponent(R.token)}`, { method: 'POST', body: JSON.stringify({ pin }) }).catch(() => null);
+    if (!r) return askPin('서버에 연결하지 못했어요');
+    if (r.status === 400) return askPin('PIN 은 6~12자리 숫자예요');
+    if (r.status === 409) return askPin('원격 PC 가 꺼져 있거나 다른 확인이 진행 중이에요');
+    if (r.status === 429) return askPin('너무 많이 틀려서 잠시 막혔어요. 나중에 다시 해 주세요');
+    // 200 이면 판정이 SSE('auth')로 온다
+  }
+  function onAuth(m) {
+    if (m.ok) {
+      R.authed = true; R.pin = R.tryPin; // 연결이 끊겼다 돌아올 때 자동으로 다시 넣기 위해
+      $r('pinForm').hidden = true; $r('pinInput').value = '';
+      setStatus(`${R.name || '노트북'} 화면을 받는 중…`, 'on');
+      return;
+    }
+    R.authed = false; R.pin = null; $r('pinInput').value = '';
+    if (m.code === 'no-pin') return askPin('원격 PC 에서 먼저 접속 PIN 을 정해야 볼 수 있어요');
+    if (m.locked) {
+      const min = m.lockedUntil ? Math.max(1, Math.ceil((m.lockedUntil - Date.now()) / 60000)) : 0;
+      return askPin(min ? `PIN 을 너무 많이 틀려서 잠겼어요. 약 ${min}분 뒤에 다시 해 주세요` : '너무 많이 틀려서 잠시 막혔어요');
+    }
+    if (m.code === 'wrong') return askPin(`PIN 이 맞지 않아요 (남은 횟수 ${m.left}번)`);
+    askPin(m.error || '확인하지 못했어요');
   }
 
   // 최신 프레임 한 장 가져오기. 가져오는 중에 새 알림이 오면 끝난 뒤 한 번만 더 (중간 프레임은 버린다)
@@ -86,12 +126,13 @@
   function close() {
     R.es?.close(); R.es = null;
     if (R.token) { navigator.sendBeacon?.(`/api/remote/leave?token=${encodeURIComponent(R.token)}`); R.token = null; }
-    R.again = false; R.stats = [];
+    R.again = false; R.stats = []; R.authed = false;
   }
-  function back() { close(); clearCanvas(); enterChat(); }
+  function back() { close(); R.pin = null; $r('pinForm').hidden = true; $r('pinInput').value = ''; clearCanvas(); enterChat(); }
 
   $r('mRemote').onclick = openRemote;
   $r('mRemote').hidden = IS_MOBILE; // 1단계는 PC 에서 보는 용도
   $r('remoteBack').onclick = back;
+  $r('pinForm').onsubmit = (e) => { e.preventDefault(); const p = $r('pinInput').value.trim(); if (p) submitPin(p); };
   addEventListener('pagehide', close);
 })();

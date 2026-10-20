@@ -98,6 +98,13 @@
     </header>
     <div class="remote-stage">
       <canvas id="remoteCanvas" width="16" height="9"></canvas>
+      <form id="pinForm" class="remote-pin" hidden novalidate>
+        <b>접속 PIN 을 입력하세요</b>
+        <p>이 PIN 은 원격 PC 의 주인이 에이전트에서 정한 번호예요. 번호를 모르면 볼 수 없어요.</p>
+        <input id="pinInput" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="6~12자리 숫자" aria-label="접속 PIN">
+        <button id="pinBtn" type="submit" class="primary">확인</button>
+        <p id="pinMsg" class="pin-msg" role="alert"></p>
+      </form>
       <div id="remoteEmpty" class="remote-empty">
         <p class="empty-title">원격 PC 가 아직 안 보여요</p>
         <p class="empty-sub">보고 싶은 PC 에서 에이전트(<code>remote-agent.exe</code>)를 켜 두세요.<br>처음 한 번은 메신저 메뉴 → 새 기기 연결 의 코드로 짝을 맺어요.</p>

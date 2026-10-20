@@ -1,4 +1,4 @@
-// 원격 보는 화면 시험 (이슈 #17) — 실제 에이전트 + 헤드리스 Edge(원격 디버깅 9333). Windows 전용.
+// 원격 보는 화면 시험 (이슈 #17, #21) — 실제 에이전트 + 헤드리스 Edge(원격 디버깅 9333). Windows 전용.
 //   1) agent\build-agent.cmd 로 빌드  2) Edge 를 --remote-debugging-port=9333 으로 띄움  3) 서버 띄움
 //   node tests/remote-ui.test.js http://localhost:8787
 // ⚠ 에이전트가 이 PC 화면을 찍어 지정한 서버로 보낸다 — 로컬 서버로만. 캔버스 내용은 읽지 않고 크기·문구·번호만 본다.
@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const B = process.argv[2], D = 'http://127.0.0.1:9333';
+const PIN = '482915';
 const EXE = path.join(__dirname, '..', 'agent', 'remote-agent.exe');
 const ok = (c, msg) => console.log(c ? 'PASS' : 'FAIL', msg);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -41,11 +42,25 @@ async function cdp(wsUrl) {
 
     // 에이전트를 켠다 (짝 코드는 메신저 "새 기기 연결" 과 같은 방식)
     const { code } = await post('pair/start', { key });
-    agent = spawn(EXE, ['--server', B, '--code', code, '--config', cfg], { stdio: 'ignore' });
-    await sleep(4500);
-    const status = await tab.evaluate(`document.getElementById('remoteStatus').textContent`);
-    ok(status.includes('화면을 받는 중'), `에이전트가 켜지자 상태가 바뀜: "${status}"`);
-    ok(await tab.evaluate(`document.getElementById('remoteEmpty').hidden`), '안내 화면이 사라짐');
+    agent = spawn(EXE, ['--server', B, '--code', code, '--config', cfg, '--set-pin', PIN, '--quiet'], { stdio: 'ignore' }); // PIN 은 이 PC 의 주인이 에이전트에서 정함
+    await sleep(4000);
+    const text = (id) => tab.evaluate(`document.getElementById('${id}').textContent`);
+    const hidden = (id) => tab.evaluate(`document.getElementById('${id}').hidden`);
+    const type = (v) => tab.evaluate(`(() => { const i = document.getElementById('pinInput'); i.value = '${v}'; document.getElementById('pinForm').requestSubmit(); return 1; })()`);
+
+    // 열쇠가 있어도 PIN 을 넣기 전에는 화면이 없다
+    ok((await text('remoteStatus')).includes('PIN 을 입력하세요') && !(await hidden('pinForm')), `에이전트가 켜지면 PIN 입력칸이 나옴: "${await text('remoteStatus')}"`);
+    ok(await hidden('remoteEmpty'), '"에이전트를 켜 두세요" 안내는 사라지고 PIN 입력칸이 대신 나옴');
+    ok((await text('remoteStats')) === '', 'PIN 을 넣기 전에는 화면도 속도 표시도 없음');
+
+    await type('000000'); await sleep(1500);
+    ok((await text('pinMsg')).includes('PIN 이 맞지 않아요') && (await text('pinMsg')).includes('4번'), `틀리면 남은 횟수가 보임: "${await text('pinMsg')}"`);
+    ok(!(await hidden('pinForm')) && (await text('remoteStats')) === '', '틀린 뒤에도 입력칸이 남고 화면은 없음');
+    ok(await tab.evaluate(`!document.getElementById('pinInput').disabled && document.getElementById('pinInput').value === ''`), '틀린 PIN 은 지워지고 다시 입력할 수 있음');
+
+    await type(PIN); await sleep(3500);
+    const status = await text('remoteStatus');
+    ok(status.includes('화면을 받는 중') && (await hidden('pinForm')), `맞는 PIN 을 넣으면 화면이 나옴: "${status}"`);
     const dims = await tab.evaluate(`[document.getElementById('remoteCanvas').width, document.getElementById('remoteCanvas').height]`);
     ok(dims[0] === 1280 && dims[1] > 0, `캔버스가 원격 화면 크기로 바뀜 (${dims[0]}x${dims[1]})`);
     const stats = await tab.evaluate(`document.getElementById('remoteStats').textContent`);
@@ -58,12 +73,22 @@ async function cdp(wsUrl) {
     // 에이전트를 끈다
     agent.kill(); await sleep(2500);
     ok((await tab.evaluate(`document.getElementById('remoteStatus').textContent`)).includes('꺼져 있어요'), '에이전트가 꺼지면 "꺼져 있어요"로 바뀜');
-    ok(await tab.evaluate(`!document.getElementById('remoteEmpty').hidden && document.getElementById('remoteStats').textContent === ''`), '안내가 다시 나오고 속도 표시가 지워짐');
+    ok(await tab.evaluate(`!document.getElementById('remoteEmpty').hidden && document.getElementById('remoteStats').textContent === '' && document.getElementById('pinForm').hidden`), '안내가 다시 나오고 속도 표시가 지워지며 입력칸은 숨겨짐');
+
+    // 에이전트를 다시 켠다 (저장된 열쇠·PIN 으로). 새로 켠 에이전트는 이전 인증을 인정하지 않으므로 다시 인증해야 하고,
+    // 방금 성공한 PIN 이 이 화면의 메모리에 있으면 한 번만 자동으로 다시 넣는다 (사용자가 또 입력하지 않게)
+    agent = spawn(EXE, ['--server', B, '--config', cfg, '--quiet'], { stdio: 'ignore' });
+    await sleep(5500);
+    const again = await text('remoteStatus');
+    ok(again.includes('화면을 받는 중') && (await hidden('pinForm')), `에이전트가 다시 켜지면 방금 쓴 PIN 으로 자동 재인증되어 화면이 다시 옴: "${again}"`);
+    agent.kill(); await sleep(2000);
 
     // 뒤로 가기: 메신저로 돌아오고 보는 사람 연결을 정리한다
     await tab.evaluate(`document.getElementById('remoteBack').click(); 1`);
     await sleep(800);
     ok(await tab.evaluate(`!document.getElementById('chat').hidden && document.getElementById('remoteScreen').hidden`), '뒤로 가면 메신저로 돌아옴');
+    ok(await tab.evaluate(`document.getElementById('pinInput').value === '' && document.getElementById('pinForm').hidden`), '나가면 입력한 PIN 도 화면에서 지워짐 (저장하지 않음)');
+    ok(!(await tab.evaluate(`JSON.stringify(localStorage) + JSON.stringify(sessionStorage)`)).includes(PIN), 'PIN 은 브라우저 저장소(localStorage·sessionStorage)에 어디에도 저장되지 않음');
     tab.close();
   } finally {
     try { agent?.kill(); } catch {}

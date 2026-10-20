@@ -66,9 +66,12 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 
 ### 6. 원격 화면 보기 (1단계: 보기만, 이슈 #17)
 내 노트북 화면을 다른 내 PC 브라우저에서 본다. 조작(마우스·키보드)은 2단계.
-- **노트북에서 에이전트 실행**: `agentuild-agent.cmd` 로 빌드 (Windows 에 내장된 컴파일러라 설치 불필요, `agentemote-agent.exe` 생성) → 처음 한 번 `remote-agent.exe --code ABC123` (메신저 메뉴 → 새 기기 연결 의 코드, 같은 짝 열쇠를 받음) → 그다음부터는 `remote-agent.exe` 만. 시계 옆 트레이 아이콘에서 ON/OFF·종료
-- **보는 PC**: 메신저 메뉴 → **원격 화면 보기** → 초당 프레임·한 장 크기·KB/s 가 함께 표시됨
+- **노트북에서 에이전트 실행**: `agent\build-agent.cmd` 로 빌드 (Windows 에 내장된 컴파일러라 설치 불필요, `agentemote-agent.exe` 생성) → 처음 한 번 `remote-agent.exe --code ABC123` (메신저 메뉴 → 새 기기 연결 의 코드, 같은 짝 열쇠를 받음) → 그다음부터는 `remote-agent.exe` 만. 시계 옆 트레이 아이콘에서 ON/OFF·종료
+- **접속 PIN (이슈 #21) — 조종당하는 PC 의 주인이 정한다**: 트레이 아이콘 메뉴 → **접속 PIN 설정…** (또는 `remote-agent.exe --set-pin 123456`, 6~12자리 숫자). **PIN 을 정하기 전에는 아무도 화면을 볼 수 없다.** PIN 은 에이전트 PC 에만 해시(PBKDF2)로 저장되고, 맞는지도 **서버가 아니라 에이전트가** 확인한다 (서버·보는 쪽은 PIN 을 저장하지 않음)
+- **보는 PC**: 메신저 메뉴 → **원격 화면 보기** → PIN 입력 → 초당 프레임·한 장 크기·KB/s 가 함께 표시됨
 - **안전장치**: 보는 동안 노트북 화면 맨 위에 **빨간 "원격 접속 중" 띠**가 항상 떠 있고(1초마다 다시 맨 위로 — 다른 창이 덮어도 복구) · 누가 보기 시작하는 순간 **토스트 알림 + 소리**, 끝나면 토스트 (`--quiet` 로 끌 수 있음). **알림은 조종당하는 PC 에서만 나오고 보는 쪽에는 없음** · 보는 사람이 없으면 화면을 찍지도 보내지도 않음 · 트레이에서 언제든 OFF · 같은 짝 열쇠를 가진 기기만 볼 수 있음
+- **무차별 대입 방어**: 에이전트에서 5번 틀리면 10분간 잠금 · 서버도 보는 기기당 5번, 열쇠당 10분에 10번으로 막음 (`REMOTE_AUTH_TIMEOUT_SEC` 로 확인 대기 시간 조절, 기본 8초)
+- **접속 기록**: 에이전트 옆 `access.log` 에 접속 시작/끝·PIN 실패를 남김 (PIN·열쇠·화면 내용은 기록 안 함)
 - **기록**: 화면은 서버 메모리에 **최신 한 장만** 덮어쓰며 저장하지 않음 (보는 사람이 없으면 받지도 않음)
 - 서버 코드는 `remote/server.js` (`/api/remote/*`), 보는 화면은 `public/remote.js`, 에이전트(C#)는 `agent/` — 메신저와 분리된 모듈
 
@@ -110,11 +113,12 @@ STALE_SEC=3 node server.js   # 다른 터미널에서 띄운 뒤
 node tests/rejoin.test.js http://localhost:8787                 # 유령 자리 정리 6항목
 REPLAY_SEC=3 node server.js  # 다른 터미널에서 띄운 뒤
 node tests/replay.test.js http://localhost:8787                 # 놓친 메시지 다시 받기 10항목
-node tests/remote.test.js http://localhost:8787                 # 원격 서버 26항목 (가짜 에이전트)
-# Windows 전용 — agentuild-agent.cmd 로 빌드한 뒤. 에이전트가 이 PC 화면을 로컬 서버로 보냄:
-node tests/remote-agent.test.js http://localhost:8787           # 진짜 에이전트 13항목
+# REMOTE_AUTH_TIMEOUT_SEC=2 로 서버를 띄운 뒤
+node tests/remote.test.js http://localhost:8787                 # 원격 서버 51항목 (가짜 에이전트가 PIN 확인)
+# Windows 전용 — agent\build-agent.cmd 로 빌드한 뒤. 에이전트가 이 PC 화면을 로컬 서버로 보냄:
+node tests/remote-agent.test.js http://localhost:8787           # 진짜 에이전트 32항목 (PIN 해시 저장·잠금·로그)
 # 위 둘 + Edge 를 --remote-debugging-port=9333 으로 띄운 뒤:
-node tests/remote-ui.test.js http://localhost:8787              # 보는 화면 12항목
+node tests/remote-ui.test.js http://localhost:8787              # 보는 화면 19항목 (PIN 입력·틀림·자동 재인증)
 ```
 
 ## Render 배포

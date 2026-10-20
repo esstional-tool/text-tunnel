@@ -227,7 +227,7 @@ try {
 
 /* ── 라우트 ─────────────────────────────── */
 // 원격조종 (이슈 #17) — 메신저와 분리된 모듈
-const handleRemote = require('./remote/server')({ readBody, send, crypto });
+const handleRemote = require('./remote/server')({ readBody, send, crypto, authTimeoutMs: (Number(process.env.REMOTE_AUTH_TIMEOUT_SEC) || 8) * 1000 }); // PIN 확인을 에이전트가 이 시간 안에 못 하면 실패 처리
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
