@@ -7,8 +7,9 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch {} },
 };
 
-// 서버 없이 화면만 보는 모드: /#demo, 또는 window.TT_DEMO = 'welcome' | 'code' | 'qr' | 'install-android' | 'install-ios' | 'wait' | 'chat'
-const DEMO = location.hash === '#demo' ? 'chat' : window.TT_DEMO;
+// 서버 없이 화면만 보는 모드: /#demo(=chat), /#demo-wait 처럼 장면 지정, 또는 window.TT_DEMO
+// 장면: 'welcome' | 'code' | 'qr' | 'install-android' | 'install-ios' | 'wait' | 'chat'
+const DEMO = /^#demo(?:-([\w-]+))?$/.test(location.hash) ? (location.hash.slice(6) || 'chat') : window.TT_DEMO;
 
 const UA = navigator.userAgent;
 const IS_IOS = /iPhone|iPad|iPod/.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
@@ -66,13 +67,31 @@ async function openQr() {
   if (!token) joinRoom(); // 미리 방에 들어가 있다가 상대가 오면 바로 대화 화면으로
 }
 
-function drawQr(code, seconds) {
-  const link = `${location.origin}/#pair=${code}`;
+const fmtCode = (code) => `${code.slice(0, 3)} ${code.slice(3)}`;
+function renderQr(box, code) {
   const qr = qrcode(0, 'M');
-  qr.addData(link); qr.make();
-  $('qrBox').innerHTML = qr.createSvgTag({ scalable: true, margin: 0 });
-  $('qrBox').querySelector('svg').setAttribute('aria-hidden', 'true');
-  $('qrCode').textContent = `${code.slice(0, 3)} ${code.slice(3)}`;
+  qr.addData(`${location.origin}/#pair=${code}`); qr.make();
+  box.innerHTML = qr.createSvgTag({ scalable: true, margin: 0 });
+  box.querySelector('svg').setAttribute('aria-hidden', 'true');
+}
+
+// 상대를 기다리는 동안 대기 화면에 다시 연결용 QR을 띄워 둔다. 코드는 5분짜리라 끝나기 전에 새로 받는다
+let waitTimer = null;
+async function refreshWaitQr() {
+  clearTimeout(waitTimer); waitTimer = null;
+  if (DEMO) { renderQr($('waitQr'), 'K7M4QX'); $('waitCode').textContent = fmtCode('K7M4QX'); return; }
+  if (others || !key || document.hidden || $('chat').hidden) return;
+  const r = await post('pair/start', { key }).catch(() => null);
+  if (!r?.ok || others) return;
+  const j = await r.json();
+  renderQr($('waitQr'), j.code);
+  $('waitCode').textContent = fmtCode(j.code);
+  waitTimer = setTimeout(refreshWaitQr, (j.expiresIn - 15) * 1000);
+}
+
+function drawQr(code, seconds) {
+  renderQr($('qrBox'), code);
+  $('qrCode').textContent = fmtCode(code);
   const end = Date.now() + seconds * 1000;
   clearInterval(qrTimer);
   const tick = () => {
@@ -129,7 +148,12 @@ async function joinRoom() {
   joining = false;
   if (!r) { setStatus('off'); return setTimeout(joinRoom, 3000); }
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) { setStatus('full', j.error); return; }
+  if (!r.ok) {
+    // 꽉 찬 경우: 남아 있던 유령 자리는 서버가 90초 안에 비워 주므로 조금 뒤 다시 시도
+    setStatus('full', r.status === 409 ? '이미 두 기기가 연결돼 있어요 · 잠시 뒤 다시 시도' : j.error);
+    if (r.status === 409 || r.status === 429) setTimeout(joinRoom, 15000);
+    return;
+  }
   token = j.token; myId = j.id; peers = null;
   connect();
 }
@@ -180,6 +204,8 @@ function setStatus(state, info) {
     state === 'full' ? (info || '연결할 수 없어요') : '다시 연결하는 중…';
   $('emptyWait').hidden = state === 'on';
   $('emptyReady').hidden = state !== 'on';
+  if (state === 'alone' && !waitTimer) refreshWaitQr();
+  if (state === 'on') { clearTimeout(waitTimer); waitTimer = null; }
 }
 
 function enterChat() {
@@ -409,7 +435,6 @@ $('qrClose').onclick = closeQr;
 $('qrRenew').onclick = openQr;
 $('installBtn').onclick = runInstall;
 $('installSkip').onclick = enterChat;
-$('emptyQr').onclick = openQr;
 
 $('composer').onsubmit = sendText;
 $('text').oninput = syncInput;
@@ -456,11 +481,21 @@ addEventListener('beforeinstallprompt', (e) => {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   unread = 0; document.title = 'Text Tunnel';
+  if (!others && key) refreshWaitQr();
   if (!DEMO && key && (!token || es?.readyState === 2)) { token = null; joinRoom(); }
 });
 // 창·앱을 닫으면 바로 나가서, 둘 다 닫으면 방이 즉시 사라지게 한다
 addEventListener('pagehide', leaveNow);
 addEventListener('pageshow', (e) => { if (e.persisted && key && !DEMO) { token = null; joinRoom(); } });
+
+// 20초마다 살아 있다고 알린다. 서버는 이 신호가 끊긴 자리를 유령으로 보고, 방이 꽉 찼을 때 비워 준다
+setInterval(async () => {
+  if (DEMO || !token || document.hidden) return;
+  const r = await fetch(api('ping')).catch(() => null);
+  if (r?.status === 401) { es?.close(); token = null; joinRoom(); }
+}, 20000);
+
+$('mobileHint').hidden = !IS_MOBILE;
 
 if ('serviceWorker' in navigator && !DEMO) navigator.serviceWorker.register('sw.js').catch(() => {});
 
