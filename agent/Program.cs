@@ -205,7 +205,7 @@ static class Capture
     public static byte[] EncodeBest(Bitmap src, Rectangle r, long quality, out bool png)
     {
         byte[] jpg = EncodeJpeg(src, r, quality); png = false;
-        if ((long)r.Width * r.Height <= 1000000)
+        if ((long)r.Width * r.Height <= 1000000 && jpg.Length < (long)r.Width * r.Height / 2) // JPEG 가 픽셀당 0.5바이트 넘게 크면 사진 같은 내용 → PNG 는 시도하지 않음 (느리고 거의 항상 짐)
         {
             byte[] p = EncodePng(src, r);
             if (p.Length < jpg.Length) { png = true; return p; }
@@ -813,7 +813,7 @@ class AgentContext : ApplicationContext
             string t = token;
             if (!on || viewers == 0 || t == null) { differ.Reset(); needKey = true; Thread.Sleep(150); continue; }
             string pp = pendingProfile;
-            if (pp != null) { pendingProfile = null; ApplyProfile(pp); needKey = true; ema = 0; } // 프로필이 바뀌면 크기·화질이 달라지므로 전체 화면부터 다시
+            if (pp != null) { pendingProfile = null; if (pp != profile) { ApplyProfile(pp); needKey = true; ema = 0; } } // 프로필이 바뀌면 크기·화질이 달라지므로 전체 화면부터 다시
             DateTime start = DateTime.UtcNow;
             try
             {
@@ -836,13 +836,13 @@ class AgentContext : ApplicationContext
                     if (needKey)
                     {
                         bool png; byte[] img = Capture.EncodeBest(bmp, new Rectangle(0, 0, w, h), quality, out png);
-                        tried = true; answer = server.PostFrame(t, img, w, h, false); sent = img.Length;
+                        tried = true; t0 = DateTime.UtcNow; answer = Post(t, img, w, h, false); sent = img.Length; // 시간은 인코딩이 아니라 올리는 데 걸린 것만 잰다
                         if (answer != null) { differ.Store(bmp); lastKey = DateTime.UtcNow; needKey = false; keysSent++; if (png) pngN++; else jpgN++; }
                     }
                     else if (rects != null)
                     {
                         byte[] bundle = Bundle(bmp, rects);
-                        tried = true; answer = server.PostFrame(t, bundle, w, h, true); sent = bundle.Length;
+                        tried = true; t0 = DateTime.UtcNow; answer = Post(t, bundle, w, h, true); sent = bundle.Length;
                         if (answer != null) patchesSent++;
                     }
                     if (tried)
@@ -868,6 +868,12 @@ class AgentContext : ApplicationContext
     }
 
     volatile int lastMs;
+    // 올리기: 실패(시간 초과·거절)는 예외 대신 null 로 돌려 화질을 내리고 전체 화면부터 다시 맞추게 한다
+    string Post(string t, byte[] body, int w, int h, bool patch)
+    {
+        try { return server.PostFrame(t, body, w, h, patch); }
+        catch (Exception) { return null; }
+    }
     // 현재 화질 등을 서버에 알린다 (보는 화면의 표시용)
     void ReportStats(string t, int w)
     {

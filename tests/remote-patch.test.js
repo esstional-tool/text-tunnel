@@ -101,6 +101,8 @@ async function viewer(key) {
   ];
   for (const [name, b] of bad) ok((await postPatch(ag.token, b)).code === 400, `잘못된 조각 묶음 거절 (400): ${name}`);
   ok((await postPatch(ag.token, bundle([{ x: 0, y: 0, w: 64, h: 64, buf: img('z') }]), 800, 600)).text === 'key', '화면 크기가 바뀌면 키 프레임을 요청');
+  for (const [w, h] of [[-5, 360], [640.5, 360], [0, 360], [9000, 360], ['x', 360]]) ok((await postKey(ag.token, img('neg'), w, h)).code === 400, `이상한 화면 크기는 거절 (400): w=${w}`);
+  ok((await getSince(v.token, 0)).code !== 500, '이상한 크기를 보낸 뒤에도 서버가 멀쩡함');
   ok(parse((await getSince(v.token, keySeq + 2)).body) === null || (await getSince(v.token, keySeq + 2)).code === 204, '거절된 조각은 저장되지 않음');
 
   // 상한: 조각이 쌓이면 새 키 프레임을 요청

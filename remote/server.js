@@ -31,7 +31,8 @@ const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 const PIN_RE = /^[0-9]{6,12}$/;
 const FRAME_MAX = 4 * 1024 * 1024;
 const PROFILES = new Set(['auto', 'quality', 'speed']);
-const SLOW_BEHIND = 8, SLOW_MS = 1500; // 보는 사람이 이만큼(번호) 이상 못 받았거나 이 시간 넘게 새 것을 안 가져가면 "느림"
+const SLOW_BEHIND = 8, SLOW_MS = 1500, STALE_MS = 10000; // 보는 사람이 이만큼(번호) 이상 못 받았거나, 새 것이 나온 지 이 시간 넘게 안 가져가면 "느림". 10초 넘게 아무것도 안 가져간 사람(멈춘 탭)은 무시
+const PATCH_COUNT_HARD = 2000; // 아주 작은 조각이 끝없이 쌓여도 개수로 막는다
 const PATCH_MAX_RECTS = 32, PATCH_BYTES_SOFT = 256 * 1024, PATCH_BYTES_HARD = 6 * 1024 * 1024, PATCH_COUNT_SOFT = 400; // 조각이 이만큼 쌓이면 새 키 프레임 요청 / 이 이상이면 버리고 키 프레임을 기다림
 const TOKEN_GRACE = 30 * 1000;       // SSE 를 안 연 입장권은 이 시간 뒤 버림
 const VIEWER_FAILS = 5;               // 보는 사람(입장권) 하나당 틀릴 수 있는 횟수
@@ -155,7 +156,7 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
         if (!KEY_RE.test(String(j.key || ''))) return send(res, 400, { error: '연결 정보가 올바르지 않아요' });
         const s = session(nsOf(j.key));
         const token = issue(s.ns, 'viewer');
-        s.viewers.set(token, { res: null, vid: crypto.randomBytes(6).toString('hex'), ok: false, fails: 0, pendingTimer: null, control: false, bucket: INPUT_PER_SEC, bucketAt: Date.now(), since: 0, sinceAt: Date.now() });
+        s.viewers.set(token, { res: null, vid: crypto.randomBytes(6).toString('hex'), ok: false, fails: 0, pendingTimer: null, control: false, bucket: INPUT_PER_SEC, bucketAt: Date.now(), since: 0, sinceAt: Date.now(), pendingAt: 0 });
         send(res, 200, { token, agentOnline: !!s.agent?.res, needPin: true });
       });
       return true;
@@ -200,7 +201,7 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
           push(v.res, { type: 'auth', ok: true });
           if (s.frame) push(v.res, { type: 'frame', seq: s.frame.seq, w: s.frame.w, h: s.frame.h });
           if (s.agent?.stats) push(v.res, s.agent.stats);
-          v.since = 0; v.sinceAt = Date.now();
+          v.since = 0; v.sinceAt = Date.now(); v.pendingAt = 0;
           notifyAgent(s);
         } else {
           v.fails++; s.fails.push(Date.now());
@@ -331,7 +332,8 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
         const s = a.s;
         if (!s.agent || s.agent.token !== a.token) return send(res, 409, 'gone');
         const kind = url.searchParams.get('kind') === 'patch' ? 'patch' : 'key';
-        const w = Math.min(8192, Number(url.searchParams.get('w')) || 0), h = Math.min(8192, Number(url.searchParams.get('h')) || 0);
+        const w = Number(url.searchParams.get('w')), h = Number(url.searchParams.get('h'));
+        if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > 8192 || h > 8192) return send(res, 400, '화면 크기가 올바르지 않아요');
         if (!okViewers(s).length) return send(res, 200, 'idle'); // 인증된 보는 사람이 없으면 받지 않는다
         if (kind === 'key') {
           if (!isImage(buf) || !w || !h) return send(res, 400, '이미지가 아니에요');
@@ -343,13 +345,14 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
           if (!rects) return send(res, 400, '조각 묶음이 올바르지 않아요');
           const seq = ++s.seq;
           for (const r of rects) { s.patches.push({ seq, ...r }); s.patchBytes += r.buf.length; }
-          if (s.patchBytes > PATCH_BYTES_HARD) { s.key = null; s.patches = []; s.patchBytes = 0; return send(res, 200, 'key'); } // 안전 상한: 버리고 키 프레임을 기다림
+          if (s.patchBytes > PATCH_BYTES_HARD || s.patches.length > PATCH_COUNT_HARD) { s.key = null; s.patches = []; s.patchBytes = 0; return send(res, 200, 'key'); } // 안전 상한: 버리고 키 프레임을 기다림
         }
         s.frame = { seq: s.seq, w, h };
+        for (const v of okViewers(s)) if (!v.pendingAt && v.since < s.seq) v.pendingAt = Date.now(); // 이 사람에게 "가져갈 새 것"이 처음 생긴 시각
         notifyOk(s, { type: 'frame', seq: s.seq, w, h });
         const wantKey = s.patchBytes > Math.max(PATCH_BYTES_SOFT, s.key.buf.length * 2) || s.patches.length > PATCH_COUNT_SOFT;
         const now = Date.now();
-        const slow = okViewers(s).some((v) => s.seq - v.since > SLOW_BEHIND || (s.seq > v.since && now - v.sinceAt > SLOW_MS)); // 못 따라오는 사람이 있다
+        const slow = okViewers(s).some((v) => now - v.sinceAt < STALE_MS && (s.seq - v.since > SLOW_BEHIND || (v.pendingAt && now - v.pendingAt > SLOW_MS))); // 따라오던 사람이 못 따라온다
         send(res, 200, (wantKey ? 'key' : 'ok') + (slow ? ' slow' : ''));
       });
       return true;
@@ -361,15 +364,16 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
       const s = a.s, k = s.key;
       if (!k) { send(res, 404, '아직 화면이 없어요'); return true; }
       if (!url.searchParams.has('since')) { // 이전 방식: 가장 최근 키 프레임 한 장 (이미지 그대로)
-        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': k.buf.length, 'Cache-Control': 'no-store', 'X-Frame-Seq': k.seq });
+        res.writeHead(200, { 'Content-Type': k.buf[0] === 0x89 ? 'image/png' : 'image/jpeg', 'Content-Length': k.buf.length, 'Cache-Control': 'no-store', 'X-Frame-Seq': k.seq });
         res.end(k.buf);
         return true;
       }
       const since = Number(url.searchParams.get('since')) || 0;
       const me = s.viewers.get(a.token); me.since = Math.max(me.since, Math.min(since, s.seq)); me.sinceAt = Date.now(); // 어디까지 가져갔는지 기억 (느림 판단용)
+      if (me.since >= s.seq) me.pendingAt = 0;
       if (since >= s.seq) { res.writeHead(204, { 'Cache-Control': 'no-store', 'X-Frame-Seq': s.seq }); res.end(); return true; } // 새 것이 없음
       const rects = since < k.seq ? [{ x: 0, y: 0, w: k.w, h: k.h, buf: k.buf }, ...s.patches] : s.patches.filter((p) => p.seq > since); // 뒤처졌거나 처음이면 키부터
-      me.since = s.seq; me.sinceAt = Date.now(); // 이번에 최신까지 가져감
+      me.since = s.seq; me.sinceAt = Date.now(); me.pendingAt = 0; // 이번에 최신까지 가져감
       const head = Buffer.alloc(16); head.write('TTF1', 0, 'latin1'); head.writeUInt32BE(s.seq, 4); head.writeUInt16BE(k.w, 8); head.writeUInt16BE(k.h, 10); head.writeUInt16BE(rects.length, 12);
       const parts = [head.subarray(0, 14)];
       for (const r of rects) { const rh = Buffer.alloc(12); rh.writeUInt16BE(r.x, 0); rh.writeUInt16BE(r.y, 2); rh.writeUInt16BE(r.w, 4); rh.writeUInt16BE(r.h, 6); rh.writeUInt32BE(r.buf.length, 8); parts.push(rh, r.buf); }

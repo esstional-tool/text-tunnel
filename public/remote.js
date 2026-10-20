@@ -73,7 +73,7 @@
   }
   function onAuth(m) {
     if (m.ok) {
-      R.authed = true; R.pin = R.tryPin; updateCtlButton(); sendProfile(); // 연결이 끊겼다 돌아올 때 자동으로 다시 넣기 위해
+      R.authed = true; R.pin = R.tryPin; updateCtlButton(); if ($r('remoteProfile').value !== 'auto') sendProfile(); // 기본값(자동)이면 보내지 않음 — 다른 보는 사람이 고른 프로필을 덮어쓰지 않게 // 연결이 끊겼다 돌아올 때 자동으로 다시 넣기 위해
       $r('pinForm').hidden = true; $r('pinInput').value = '';
       setStatus(`${R.name || '노트북'} 화면을 받는 중…`, 'on');
       return;
@@ -220,9 +220,14 @@
           const x = dv.getUint16(o), y = dv.getUint16(o + 2), w = dv.getUint16(o + 4), h = dv.getUint16(o + 6), len = dv.getUint32(o + 8); o += 12;
           parts.push({ x, y, w, h, blob: new Blob([new Uint8Array(buf, o, len)]) }); o += len;
         }
-        const bmps = await Promise.all(parts.map((p) => createImageBitmap(p.blob))); // 디코딩은 한꺼번에, 그리기는 순서대로
+        const settled = await Promise.allSettled(parts.map((p) => createImageBitmap(p.blob))); // 디코딩은 한꺼번에, 그리기는 순서대로
+        const bmps = settled.map((x) => (x.status === 'fulfilled' ? x.value : null));
+        if (bmps.some((b) => !b)) { bmps.forEach((b) => b?.close?.()); R.seq = 0; break; } // 하나라도 못 풀었으면 버리고 다음에 전체 화면부터 다시 받는다
         const c = $r('remoteCanvas');
-        if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+        if (c.width !== W || c.height !== H) {
+          if (!(parts[0].x === 0 && parts[0].y === 0 && parts[0].w === W && parts[0].h === H)) { bmps.forEach((b) => b.close?.()); R.seq = 0; break; } // 크기가 바뀌었는데 전체 화면이 아니면 전체 화면부터 다시
+          c.width = W; c.height = H;
+        }
         const g = c.getContext('2d');
         bmps.forEach((b, k) => { g.drawImage(b, parts[k].x, parts[k].y); b.close?.(); });
         R.seq = seq;
