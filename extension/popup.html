@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <style>
+    :root { --bg: #fff; --bg-2: #f5f5f7; --text: #111114; --muted: #86868b; --accent: #0a84ff; color-scheme: light; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --bg-2: #2c2c2e; --text: #f5f5f7; --muted: #8e8e93; color-scheme: dark; } }
+    body { margin: 0; width: 280px; padding: 16px; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, "Malgun Gothic", sans-serif; }
+    h1 { margin: 0 0 4px; font-size: 15px; }
+    p { margin: 0; color: var(--muted); font-size: 12px; }
+    button { width: 100%; margin-top: 14px; padding: 11px; border: 0; border-radius: 10px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+    label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg-2); cursor: pointer; }
+    #result { margin-top: 10px; min-height: 1.5em; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>Text Tunnel 흔적 지우기</h1>
+  <p>Text Tunnel 방문 기록과 캐시만 지웁니다. 연결 정보는 그대로라 다시 짝 맺을 필요 없어요.</p>
+  <label>앱을 열 때마다 기록 자동 삭제 <input type="checkbox" id="auto"></label>
+  <button id="clean">지금 지우기</button>
+  <p id="result"></p>
+  <script src="popup.js"></script>
+</body>
+</html>
