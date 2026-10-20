@@ -291,6 +291,15 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 대화 지우기: 서버에 남은 사진·파일과 올라오던 조각을 즉시 버리고, 양쪽 화면도 비우게 한다
+  if (p === '/api/clear' && req.method === 'POST') {
+    for (const f of room.files.values()) { clearTimeout(f.timer); fileBytes -= f.buf.length; }
+    for (const u of room.uploads.values()) clearTimeout(u.timer);
+    room.files.clear(); room.uploads.clear();
+    broadcast(room, { type: 'clear', from: member.id, name: member.name, at: Date.now() });
+    return send(res, 200, 'ok');
+  }
+
   if (p === '/api/leave' && req.method === 'POST') {
     removeMember(room, token);
     return send(res, 200, 'ok');
@@ -322,6 +331,7 @@ const server = http.createServer((req, res) => {
       up = {
         chunks: [], received: 0, total,
         name: (url.searchParams.get('name') || 'file').slice(0, 200),
+        batch: /^[\w-]{1,40}$/.test(url.searchParams.get('batch') || '') ? url.searchParams.get('batch') : undefined, // 한 번에 고른 사진 묶음
         mime: req.headers['content-type'] || 'application/octet-stream',
         timer: setTimeout(() => room.uploads.delete(uid), FILE_TTL),
       };
@@ -343,7 +353,7 @@ const server = http.createServer((req, res) => {
       fileBytes += file.buf.length;
       file.timer = setTimeout(() => { room.files.delete(fid); fileBytes -= file.buf.length; }, FILE_TTL);
       room.files.set(fid, file);
-      broadcast(room, { type: 'file', mid: crypto.randomUUID(), fid, fname: file.name, mime: file.mime, size: file.buf.length, from: member.id, name: member.name, at: Date.now() });
+      broadcast(room, { type: 'file', mid: crypto.randomUUID(), fid, fname: file.name, mime: file.mime, size: file.buf.length, batch: up.batch, from: member.id, name: member.name, at: Date.now() });
       send(res, 200, 'done');
     });
   }
