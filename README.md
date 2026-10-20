@@ -43,6 +43,7 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 - **PC** — 끌어다 놓기, Ctrl+V 캡처 붙여 넣기
 - **안드로이드** — 갤러리에서 "공유 → Tunnel"로 바로 보내기 (설치한 앱)
 - **크기** — 파일 하나 100MB까지, 종류 무관 (8MB 조각으로 나눠 올림)
+- **끊겨도 이어서** — 업로드 중 연결이 끊기거나 서버가 재시작되면 자동으로 최대 5번 다시 시도하고, 받은 데까지 건너뛰어 이어서 올림 (같은 사진이 두 번 가지 않음)
 
 ### 4. 기록 안 남기기 (앱 기본)
 - 대화는 어디에도 저장 안 됨 (새로고침·창 닫기 시 사라짐)
@@ -95,6 +96,7 @@ Windows 에서는 `start.cmd` 더블클릭. 화면만 보려면 `http://localhos
 
 ```
 node tests/pair.test.js http://localhost:8787                   # 짝 맺기 16항목
+node tests/upload.test.js http://localhost:8787                 # 업로드 이어 올리기 9항목
 SKIP_RL=1 node tests/pair.test.js https://text-tunnel.onrender.com  # 실제 서버 (IP 차단 시험 제외)
 STALE_SEC=3 node server.js   # 다른 터미널에서 띄운 뒤
 node tests/rejoin.test.js http://localhost:8787                 # 유령 자리 정리 6항목
