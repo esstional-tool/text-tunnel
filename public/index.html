@@ -95,6 +95,10 @@
 
     <div id="extOn" class="ext-card on" hidden>
       <p class="ext-state"><span class="dot on"></span> 설치됨 <span id="extVer" class="sub"></span></p>
+      <div id="extUpdate" class="note" hidden>
+        새 버전 <b id="extLatest"></b>이 있어요. 확장은 자동 업데이트가 안 돼서 직접 바꿔야 해요.<br>
+        ① <a href="/text-tunnel-cleaner.zip" download>zip 다시 받기</a> → ② 압축을 풀어 <b>기존 text-tunnel-cleaner 폴더에 덮어쓰기</b> → ③ 확장 페이지에서 <b>새로고침 ↻</b> → ④ 아래 '설치했어요 · 다시 확인'
+      </div>
       <label class="toggle">앱을 열 때마다 기록 자동 삭제 <input type="checkbox" id="extAuto"></label>
       <button id="extClean" class="primary wide">지금 지우기</button>
       <p id="extResult" class="sub center-text"></p>
@@ -104,6 +108,7 @@
         <p class="sub">앱 창이 앞에 있으면 항상 동작해요. 앱 창이 뒤에 있을 때 안 되면 다른 프로그램이 같은 키를 쓰고 있는 거예요. 크롬에 같은 확장이 있다면 지우고, <code>edge://extensions/shortcuts</code> 에서 Ctrl+Shift+8 처럼 다른 숫자로 바꿔 보세요.</p>
         <button id="extWipe" class="danger">지금 완전 정리</button>
       </div>
+      <button id="extRecheck" class="secondary wide">설치했어요 · 다시 확인</button>
     </div>
 
     <div id="extOff" class="ext-card">
