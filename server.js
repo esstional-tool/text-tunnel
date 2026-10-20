@@ -272,7 +272,7 @@ const server = http.createServer((req, res) => {
       let room = rooms.get(id);
       if (!room) {
         if (rooms.size >= MAX_ROOMS) return send(res, 429, { error: '서버가 붐벼요. 잠시 뒤에 다시 열어 주세요' });
-        room = { id, members: new Map(), files: new Map(), uploads: new Map(), epoch: crypto.randomBytes(4).toString('hex'), seq: 0, log: [] };
+        room = { id, members: new Map(), files: new Map(), uploads: new Map(), done: new Map(), epoch: crypto.randomBytes(4).toString('hex'), seq: 0, log: [] };
         rooms.set(id, room);
       }
       // 같은 기기가 다시 들어오면(새로고침·앱 재실행) 이전 자리를 비운다
@@ -345,6 +345,15 @@ const server = http.createServer((req, res) => {
     });
   }
 
+  // 업로드 이어 올리기: 연결이 끊겨 다시 시도하는 앱이 "어디까지 받았어?" 를 묻는다
+  // 다 받았으면 done (응답만 끊긴 경우 — 다시 올려 중복되지 않게), 모르면 404 (서버 재시작 등 → 처음부터)
+  if (p === '/api/upload' && req.method === 'GET') {
+    const uid = url.searchParams.get('uid') || '';
+    if (room.done.has(uid)) return send(res, 200, { done: true });
+    const up = room.uploads.get(uid);
+    return up ? send(res, 200, { received: up.received, total: up.total }) : send(res, 404, { received: 0 });
+  }
+
   // 파일은 8MB 조각으로 순서대로 올라온다 (프록시의 요청 크기 제한을 피하려고)
   // ?uid=업로드ID&offset=시작바이트&total=전체크기&name=파일명
   if (p === '/api/upload' && req.method === 'POST') {
@@ -377,6 +386,8 @@ const server = http.createServer((req, res) => {
 
       clearTimeout(up.timer);
       room.uploads.delete(uid);
+      room.done.set(uid, true); // 마지막 응답이 끊겨도 다시 시도하는 앱이 "다 받았다" 를 알 수 있게 (10분)
+      setTimeout(() => room.done.delete(uid), FILE_TTL);
       const fid = crypto.randomUUID();
       const file = { buf: Buffer.concat(up.chunks), mime: up.mime, name: up.name };
       fileBytes += file.buf.length;
