@@ -259,6 +259,64 @@
   }
   function back() { releaseAll(); setControlState(false, false); close(); R.pin = null; $r('pinForm').hidden = true; $r('pinInput').value = ''; clearCanvas(); enterChat(); }
 
+  // ── 이 PC 원격 허용 켜기 안내 (이슈 #30) ───────────────────────
+  // 에이전트가 켜져 있는지 실시간으로 보여 주고(보는 사람으로 입장해 'agent' 알림만 받음), 연결 코드를 만들어 실행 명령으로 보여 준다
+  const Hs = { es: null, token: null, timer: 0 };
+  const hostStatus = (text, state) => { $r('hostStatus').textContent = text; $r('hostDot').className = `dot ${state}`; };
+  function hostClose() {
+    Hs.es?.close(); Hs.es = null;
+    if (Hs.token) { navigator.sendBeacon?.(`/api/remote/leave?token=${encodeURIComponent(Hs.token)}`); Hs.token = null; }
+    clearInterval(Hs.timer); Hs.timer = 0;
+  }
+  async function openHost() {
+    closeSheets(); show('hostScreen');
+    $r('hostCodeBox').hidden = true;
+    hostClose();
+    if (!key) { hostStatus('먼저 메신저로 연결해야 해요', 'off'); return; }
+    hostStatus('확인하는 중…', 'alone');
+    const r = await fetch('/api/remote/view/join', { method: 'POST', body: JSON.stringify({ key }) }).catch(() => null);
+    if (!r?.ok) { hostStatus('서버에 연결하지 못했어요', 'off'); return; }
+    Hs.token = (await r.json()).token;
+    Hs.es = new EventSource(`/api/remote/view/events?token=${encodeURIComponent(Hs.token)}`);
+    Hs.es.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.type !== 'agent') return;
+      if (m.online) hostStatus(`에이전트가 켜져 있어요 (${m.name || 'PC'}) — 다른 PC 에서 원격 화면 보기로 들어갈 수 있어요`, 'on');
+      else hostStatus('에이전트가 꺼져 있어요 — 아래 순서로 켜 보세요', 'alone');
+    };
+    Hs.es.onerror = () => hostStatus('다시 연결하는 중…', 'off');
+  }
+  async function makeCode() {
+    if (!key) return;
+    const b = $r('hostCodeBtn'); b.disabled = true;
+    const r = await fetch('/api/pair/start', { method: 'POST', body: JSON.stringify({ key }) }).catch(() => null);
+    b.disabled = false;
+    if (!r?.ok) { $r('hostTimer').textContent = '코드를 받지 못했어요. 잠시 뒤 다시 해 주세요'; $r('hostCodeBox').hidden = false; return; }
+    const j = await r.json();
+    $r('hostCmd').textContent = `.\\run-agent.cmd --code ${j.code}`;
+    $r('hostCodeBox').hidden = false; b.textContent = '새 코드 만들기';
+    const end = Date.now() + j.expiresIn * 1000;
+    clearInterval(Hs.timer);
+    const tick = () => {
+      const left = Math.max(0, Math.round((end - Date.now()) / 1000));
+      $r('hostTimer').textContent = left ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} 안에 실행하세요 (한 번만 쓸 수 있어요)` : '코드가 만료됐어요 — 새 코드를 만들어 주세요';
+      if (!left) clearInterval(Hs.timer);
+    };
+    tick(); Hs.timer = setInterval(tick, 1000);
+  }
+  async function copyCmd() {
+    const text = $r('hostCmd').textContent; if (!text) return;
+    try { await navigator.clipboard.writeText(text); $r('hostCopy').textContent = '복사됨'; setTimeout(() => ($r('hostCopy').textContent = '복사'), 1500); }
+    catch { const sel = getSelection(), rg = document.createRange(); rg.selectNodeContents($r('hostCmd')); sel.removeAllRanges(); sel.addRange(rg); $r('hostCopy').textContent = '선택됨 — Ctrl+C'; }
+  }
+  SCREENS.push('hostScreen');
+  $r('mHost').onclick = openHost;
+  $r('mHost').hidden = IS_MOBILE; // 조종당하는 쪽은 PC
+  $r('hostBack').onclick = () => { hostClose(); enterChat(); };
+  $r('hostCodeBtn').onclick = makeCode;
+  $r('hostCopy').onclick = copyCmd;
+  addEventListener('pagehide', hostClose);
+
   $r('mRemote').onclick = openRemote;
   $r('mRemote').hidden = IS_MOBILE; // 1단계는 PC 에서 보는 용도
   $r('remoteBack').onclick = back;

@@ -109,11 +109,52 @@
       </form>
       <div id="remoteEmpty" class="remote-empty">
         <p class="empty-title">원격 PC 가 아직 안 보여요</p>
-        <p class="empty-sub">보고 싶은 PC 에서 에이전트(<code>remote-agent.exe</code>)를 켜 두세요.<br>처음 한 번은 메신저 메뉴 → 새 기기 연결 의 코드로 짝을 맺어요.</p>
+        <p class="empty-sub">보고 싶은 PC 에서 앱 메뉴 → <b>이 PC 원격 허용 켜기</b> 를 따라 에이전트(<code>remote-agent.exe</code>)를 켜 두세요.</p>
       </div>
     </div>
     <p id="remoteStats" class="remote-stats tabular"></p>
     <p id="remoteInfo" class="remote-info tabular"></p>
+  </section>
+
+  <!-- 원격조종: 이 PC 를 원격으로 볼 수 있게 켜기 안내 (이슈 #30, public/remote.js) -->
+  <section id="hostScreen" class="host" hidden>
+    <header>
+      <button id="hostBack" class="icon-btn" aria-label="메신저로 돌아가기"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="title">
+        <strong>이 PC 원격 허용 켜기</strong>
+        <span class="status"><span id="hostDot" class="dot"></span><span id="hostStatus">확인하는 중…</span></span>
+      </div>
+    </header>
+    <div class="host-body">
+      <p class="host-lead">이 PC 를 다른 PC 에서 보고 조종하려면 <b>에이전트</b> 프로그램을 이 PC 에서 켜 둬야 해요. 브라우저만으로는 다른 프로그램의 마우스·키보드를 대신 눌러 줄 수 없어서 작은 프로그램이 필요해요.</p>
+      <ol class="host-steps">
+        <li>
+          <b>에이전트 받기</b>
+          <p>압축을 풀면 바로 실행할 수 있어요 (Windows 에 들어 있는 컴파일러로 처음 한 번 자동 빌드 — 따로 설치할 것은 없어요).</p>
+          <a id="hostDl" class="primary host-btn" href="/text-tunnel-agent.zip" download>에이전트 받기 (zip)</a>
+        </li>
+        <li>
+          <b>연결 코드 만들기</b>
+          <p>에이전트가 이 앱과 같은 짝 열쇠를 받는 6자리 코드예요. 5분 안에 한 번만 쓸 수 있어요.</p>
+          <button id="hostCodeBtn" class="primary host-btn" type="button">연결 코드 만들기</button>
+          <div id="hostCodeBox" class="host-code" hidden>
+            <p class="host-cmd-label">압축 푼 폴더에서 명령 프롬프트로 실행</p>
+            <div class="host-cmd-row"><code id="hostCmd"></code><button id="hostCopy" class="plain" type="button">복사</button></div>
+            <p id="hostTimer" class="host-timer"></p>
+          </div>
+        </li>
+        <li>
+          <b>트레이 아이콘에서 설정</b>
+          <p>시계 옆에 방패 아이콘이 생겨요. 우클릭해서:</p>
+          <ul>
+            <li><b>접속 PIN 설정…</b> — 먼저! 정하기 전에는 아무도 이 PC 를 볼 수 없어요</li>
+            <li><b>원격 조종 허용</b> — 마우스·키보드까지 쓰려면 (기본은 보기만)</li>
+            <li><b>Windows 시작 시 자동 실행</b> — PC 를 켤 때마다 자동으로 켜져요</li>
+          </ul>
+        </li>
+      </ol>
+      <p class="host-note">켜져 있는 동안 누가 보면 화면 맨 위에 빨간 띠가 떠요. 다른 PC 에서는 앱 메뉴 → <b>원격 화면 보기</b> 로 들어가 PIN 을 입력해요.</p>
+    </div>
   </section>
 
   <!-- PC: 방문 기록 지우기 확장 프로그램 -->
@@ -238,6 +279,7 @@
       <button id="mQr" class="row-btn">새 기기 연결 (QR·코드 보기)</button>
       <button id="mInstall" class="row-btn" hidden>앱으로 설치</button>
       <button id="mClear" class="row-btn danger-text">대화 지우기</button>
+      <button id="mHost" class="row-btn">이 PC 원격 허용 켜기 (에이전트)</button>
       <button id="mRemote" class="row-btn">원격 화면 보기 (다른 PC)</button>
       <button id="mExt" class="row-btn">방문 기록 지우기 (크롬 확장)</button>
       <button id="mRename" class="row-btn">이 기기 이름 바꾸기</button>

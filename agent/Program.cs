@@ -6,6 +6,7 @@
 //   PIN:         트레이 메뉴 → 접속 PIN 설정…  (또는 --set-pin 123456)   ← PIN 을 정하기 전에는 아무도 볼 수 없다
 //   조종:        트레이 메뉴 → 원격 조종 허용 (또는 --allow-control / --deny-control). 기본은 꺼짐 = 보기만 된다
 //   즉시 중지:   Ctrl+Alt+F12, 트레이 메뉴, 또는 설정 폴더에 panic.now 파일 만들기
+//   자동 실행:   트레이 메뉴 → Windows 시작 시 자동 실행 (또는 --autostart on / off). 시작 프로그램(HKCU Run)에 등록/삭제
 //   옵션:        --server https://…  --config <폴더>  --quiet (접속 알림 토스트·소리 끄기, 띠는 그대로 — 시험용)
 //
 // 안전장치 (무인 접속이라 필수)
@@ -33,6 +34,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
+using Microsoft.Win32;
 using System.Windows.Forms;
 
 static class Native
@@ -468,6 +470,27 @@ class PinDialog : Form
 }
 
 // 누군가 보는 동안 화면 맨 위에 항상 떠 있는 빨간 띠
+// Windows 시작 시 자동 실행 (시작 프로그램 = HKCU\Software\Microsoft\Windows\CurrentVersion\Run). 관리자 권한이 필요 없고 이 사용자에게만 적용된다
+static class Autostart
+{
+    const string RunPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    public static string Name = "text-tunnel-agent"; // 시험에서는 --run-key-name 으로 다른 이름을 써서 사용자 설정을 건드리지 않는다
+    public static string ServerUrl, Dir;
+
+    public static bool IsOn()
+    {
+        using (RegistryKey k = Registry.CurrentUser.OpenSubKey(RunPath)) return k != null && k.GetValue(Name) != null;
+    }
+    public static void Set(bool on)
+    {
+        using (RegistryKey k = Registry.CurrentUser.CreateSubKey(RunPath))
+        {
+            if (on) k.SetValue(Name, "\"" + Application.ExecutablePath + "\" --server \"" + ServerUrl + "\" --config \"" + Dir + "\"");
+            else if (k.GetValue(Name) != null) k.DeleteValue(Name);
+        }
+    }
+}
+
 class Banner : Form
 {
     readonly Label label = new Label();
@@ -541,6 +564,7 @@ class AgentContext : ApplicationContext
     volatile bool allowControl = false;
     readonly HashSet<string> authedVids = new HashSet<string>(); // 이 에이전트가 PIN 을 직접 확인해 통과시킨 보는 사람들 (입력은 이들만)
     readonly ToolStripMenuItem controlItem = new ToolStripMenuItem();
+    readonly ToolStripMenuItem startupItem = new ToolStripMenuItem();
     volatile string token;
     volatile bool controlReported = false;
     readonly object controlPostGate = new object();
@@ -561,10 +585,13 @@ class AgentContext : ApplicationContext
         ToolStripMenuItem panic = new ToolStripMenuItem("조종 즉시 중지 (Ctrl+Alt+F12)");
         panic.Click += delegate { Panic("트레이 메뉴"); };
         banner.PanicKey += delegate { Panic("단축키 Ctrl+Alt+F12"); };
+        startupItem.Text = "Windows 시작 시 자동 실행";
+        startupItem.Click += delegate { ToggleAutostart(); };
         ToolStripMenuItem exit = new ToolStripMenuItem("종료");
         exit.Click += delegate { Quit(); };
         ContextMenuStrip menu = new ContextMenuStrip();
-        menu.Items.AddRange(new ToolStripItem[] { info, fpsInfo, new ToolStripSeparator(), pinItem, controlItem, panic, toggle, exit });
+        menu.Items.AddRange(new ToolStripItem[] { info, fpsInfo, new ToolStripSeparator(), pinItem, controlItem, startupItem, panic, toggle, exit });
+        menu.Opening += delegate { try { startupItem.Checked = Autostart.IsOn(); } catch (Exception) { } };
         tray.ContextMenuStrip = menu; tray.Icon = SystemIcons.Shield; tray.Visible = true;
         tray.DoubleClick += delegate { SetOn(!on); };
         allowControl = File.Exists(ControlFile(dir));
@@ -580,6 +607,18 @@ class AgentContext : ApplicationContext
         new Thread(CaptureLoop) { IsBackground = true }.Start();
         System.Windows.Forms.Timer t = new System.Windows.Forms.Timer { Interval = 1000 };
         t.Tick += delegate { Refresh(); }; t.Start();
+    }
+
+    void ToggleAutostart()
+    {
+        try
+        {
+            bool now = !Autostart.IsOn();
+            Autostart.Set(now);
+            AccessLog.Write(now ? "Windows 시작 시 자동 실행을 켰어요" : "Windows 시작 시 자동 실행을 껐어요");
+            if (!quiet) tray.ShowBalloonTip(3000, now ? "자동 실행을 켰어요" : "자동 실행을 껐어요", now ? "이 PC 를 켜면 원격 에이전트도 자동으로 켜져요." : "이제 직접 실행해야 켜져요.", ToolTipIcon.Info);
+        }
+        catch (Exception e) { AccessLog.Write("자동 실행 설정 실패: " + e.Message); }
     }
 
     public static string ControlFile(string dir) { return Path.Combine(dir, "control.on"); }
@@ -959,6 +998,14 @@ static class Program
         AccessLog.Dir = dir;
         if (Array.IndexOf(args, "--allow-control") >= 0) { File.WriteAllText(AgentContext.ControlFile(dir), "on"); AccessLog.Write("조종 허용을 켰어요 (--allow-control)"); }
         if (Array.IndexOf(args, "--deny-control") >= 0) { if (File.Exists(AgentContext.ControlFile(dir))) File.Delete(AgentContext.ControlFile(dir)); AccessLog.Write("조종 허용을 껐어요 (--deny-control)"); }
+        Autostart.ServerUrl = serverUrl; Autostart.Dir = dir;
+        string runKey = Arg(args, "--run-key-name"); if (runKey != null) Autostart.Name = runKey; // 시험용
+        string autostart = Arg(args, "--autostart");
+        if (autostart == "on" || autostart == "off")
+        {
+            try { Autostart.Set(autostart == "on"); AccessLog.Write(autostart == "on" ? "Windows 시작 시 자동 실행을 켰어요 (--autostart)" : "Windows 시작 시 자동 실행을 껐어요 (--autostart)"); }
+            catch (Exception e) { AccessLog.Write("자동 실행 설정 실패: " + e.Message); }
+        }
         Inject.Sink = Arg(args, "--input-sink"); // 시험용
         Capture.FakeDir = Arg(args, "--fake-screen"); // 시험용: 실제 화면 대신 합성 화면 (폴더의 fake-screen.txt)
         string setPin = Arg(args, "--set-pin");
