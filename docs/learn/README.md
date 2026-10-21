@@ -9,6 +9,12 @@
 |---|---|---|---|
 | 2026-10-20 | [#9](https://github.com/esstional-tool/text-tunnel/issues/9) · [#10](https://github.com/esstional-tool/text-tunnel/pull/10) | [놓친 메시지 다시 받기](2026-10-20-09-replay-missed-messages.md) | SSE 이벤트 ID · Last-Event-ID · 링 버퍼(TTL 로그) · 세대 번호(epoch) · 중복 제거로 만드는 "정확히 한 번처럼" · 가명 식별자(해시) |
 | 2026-10-20 | [#11](https://github.com/esstional-tool/text-tunnel/issues/11) · [#12](https://github.com/esstional-tool/text-tunnel/pull/12) | [업로드 자동 재시도·이어 올리기](2026-10-20-11-upload-retry.md) | 지수 백오프 재시도 · 재시도할 오류 가르기 · 재개 가능 업로드 · 멱등한 완료 · PaaS 재시작 구간 · 변수를 하나씩 바꿔 원인 좁히기 · 네트워크 조건 흉내(CDP) |
+| 2026-10-20 | [#17](https://github.com/esstional-tool/text-tunnel/issues/17) · [#18](https://github.com/esstional-tool/text-tunnel/pull/18) | [원격 화면 보기 (1단계)](2026-10-20-17-remote-view.md) | 화면 캡처(GDI) · JPEG 인코딩 · pull 방식 알림 · 수요 기반 캡처 · 열쇠=자격(네임스페이스 해시) · C# 5 내장 csc · 트레이/최상위 띠 |
+| 2026-10-20 | [#19](https://github.com/esstional-tool/text-tunnel/issues/19) · [#20](https://github.com/esstional-tool/text-tunnel/pull/20) | [원격 접속 알림](2026-10-20-19-agent-alerts.md) | Z-order/TOPMOST 재올리기 · 상태 변화 순간만 알리기 · 토스트/소리 · 알림 위치 설계(조종당하는 쪽만) |
+| 2026-10-20 | [#21](https://github.com/esstional-tool/text-tunnel/issues/21) · [#22](https://github.com/esstional-tool/text-tunnel/pull/22) | [접속 PIN](2026-10-20-21-remote-pin.md) | PBKDF2 해시 · 끝단(에이전트)에서 검증 · 이중 잠금(에이전트+서버) · 기본 거부 · 자동 재인증 |
+| 2026-10-20 | [#23](https://github.com/esstional-tool/text-tunnel/issues/23) · [#26](https://github.com/esstional-tool/text-tunnel/pull/26) | [원격 조종(마우스·키보드)](2026-10-20-23-remote-control.md) | mouse_event/keybd_event · 눌린 키 자동 떼기 · RegisterHotKey 즉시 중지 · 입력 묶음(coalescing) · test sink |
+| 2026-10-20 | [#24](https://github.com/esstional-tool/text-tunnel/issues/24) · [#27](https://github.com/esstional-tool/text-tunnel/pull/27) | [바뀐 부분만 보내기](2026-10-20-24-dirty-rect.md) | 칸 비교(memcmp) · 사각형 합치기 · 키 프레임+조각 · since 커서 · 합성 화면 시험 |
+| 2026-10-20 | [#25](https://github.com/esstional-tool/text-tunnel/issues/25) · [#28](https://github.com/esstional-tool/text-tunnel/pull/28) | [화질 자동 조절·코덱 선택](2026-10-20-25-quality-codec.md) | EMA 피드백 제어(AIMD 비슷) · 종단 backpressure(slow) · JPEG/PNG 선택 · 프로필 · 지연 프록시 시험 |
 
 ## 노트 쓰는 법 (다음 작업부터 같은 형식)
 
