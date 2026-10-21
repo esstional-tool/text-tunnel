@@ -15,6 +15,7 @@
 | 2026-10-20 | [#23](https://github.com/esstional-tool/text-tunnel/issues/23) · [#26](https://github.com/esstional-tool/text-tunnel/pull/26) | [원격 조종(마우스·키보드)](2026-10-20-23-remote-control.md) | mouse_event/keybd_event · 눌린 키 자동 떼기 · RegisterHotKey 즉시 중지 · 입력 묶음(coalescing) · test sink |
 | 2026-10-20 | [#24](https://github.com/esstional-tool/text-tunnel/issues/24) · [#27](https://github.com/esstional-tool/text-tunnel/pull/27) | [바뀐 부분만 보내기](2026-10-20-24-dirty-rect.md) | 칸 비교(memcmp) · 사각형 합치기 · 키 프레임+조각 · since 커서 · 합성 화면 시험 |
 | 2026-10-20 | [#25](https://github.com/esstional-tool/text-tunnel/issues/25) · [#28](https://github.com/esstional-tool/text-tunnel/pull/28) | [화질 자동 조절·코덱 선택](2026-10-20-25-quality-codec.md) | EMA 피드백 제어(AIMD 비슷) · 종단 backpressure(slow) · JPEG/PNG 선택 · 프로필 · 지연 프록시 시험 |
+| 2026-10-21 | [#30](https://github.com/esstional-tool/text-tunnel/issues/30) · [#31](https://github.com/esstional-tool/text-tunnel/pull/31) | [앱에서 원격 허용 켜기](2026-10-21-30-host-onboarding.md) | 동적 zip(서버 주소 주입)·Host 헤더 주입 방어 · .cmd CRLF·%~dp0 · 시작 프로그램(HKCU Run) · 실시간 상태(SSE agent 알림) |
 
 ## 노트 쓰는 법 (다음 작업부터 같은 형식)
 
