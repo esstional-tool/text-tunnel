@@ -183,7 +183,9 @@
     $r('remoteCtl').onclick = toggleControl;
   }
 
-  // 최신 프레임 한 장 가져오기. 가져오는 중에 새 알림이 오면 끝난 뒤 한 번만 더 (중간 프레임은 버린다)
+  // 바뀐 부분 가져오기 (이슈 #24): "내가 마지막으로 그린 번호(since)" 이후의 조각들을 한 번에 받아 캔버스에 순서대로 덧그린다.
+  // 처음이거나 많이 뒤처졌으면 서버가 전체 화면(키 프레임)부터 준다. 가져오는 중에 새 알림이 오면 끝난 뒤 한 번만 더 (중간은 한 묶음으로 따라잡음)
+  // 묶음 형식: 'TTF1' | u32 번호 | u16 가로 | u16 세로 | u16 개수 | 개수 × { u16 x, y, w, h, u32 길이, 이미지 }
   async function pull() {
     if (R.fetching) { R.again = true; return; }
     R.fetching = true;
@@ -191,33 +193,41 @@
       do {
         R.again = false;
         const t0 = performance.now();
-        const r = await fetch(`/api/remote/frame?token=${encodeURIComponent(R.token)}`, { cache: 'no-store' });
-        if (!r.ok) break;
-        const seq = Number(r.headers.get('x-frame-seq'));
-        const blob = await r.blob();
+        const r = await fetch(`/api/remote/frame?token=${encodeURIComponent(R.token)}&since=${R.seq}`, { cache: 'no-store' });
+        if (r.status === 204 || !r.ok) break;
+        const buf = await r.arrayBuffer();
+        const dv = new DataView(buf);
+        if (buf.byteLength < 14 || dv.getUint32(0) !== 0x54544631) break; // 'TTF1'
+        const seq = dv.getUint32(4), W = dv.getUint16(8), H = dv.getUint16(10), n = dv.getUint16(12);
         if (seq <= R.seq) continue; // 이미 그린 것
-        const bmp = await createImageBitmap(blob);
+        const parts = []; let o = 14;
+        for (let k = 0; k < n; k++) {
+          const x = dv.getUint16(o), y = dv.getUint16(o + 2), w = dv.getUint16(o + 4), h = dv.getUint16(o + 6), len = dv.getUint32(o + 8); o += 12;
+          parts.push({ x, y, w, h, blob: new Blob([new Uint8Array(buf, o, len)]) }); o += len;
+        }
+        const bmps = await Promise.all(parts.map((p) => createImageBitmap(p.blob))); // 디코딩은 한꺼번에, 그리기는 순서대로
         const c = $r('remoteCanvas');
-        if (c.width !== bmp.width || c.height !== bmp.height) { c.width = bmp.width; c.height = bmp.height; }
-        c.getContext('2d').drawImage(bmp, 0, 0);
-        bmp.close?.();
+        if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+        const g = c.getContext('2d');
+        bmps.forEach((b, k) => { g.drawImage(b, parts[k].x, parts[k].y); b.close?.(); });
         R.seq = seq;
         $r('remoteEmpty').hidden = true;
-        stat(blob.size, performance.now() - t0);
+        stat(buf.byteLength, performance.now() - t0, n);
       } while (R.again);
     } catch {} finally { R.fetching = false; }
   }
 
-  // 속도를 눈으로 보기: 최근 2초의 초당 프레임, 프레임 크기, 가져오는 데 걸린 시간
-  function stat(bytes, ms) {
+  // 속도를 눈으로 보기: 최근 2초의 초당 갱신 횟수, 한 번에 받은 평균 크기, 가져오는 데 걸린 시간, 조각 수 (전체 화면이면 1개)
+  function stat(bytes, ms, rects) {
     const now = performance.now();
-    R.stats.push({ at: now, bytes, ms });
+    R.stats.push({ at: now, bytes, ms, rects });
     while (R.stats.length && now - R.stats[0].at > 2000) R.stats.shift();
     const n = R.stats.length;
     const fps = n / 2;
-    const kb = R.stats.reduce((s, x) => s + x.bytes, 0) / n / 1024;
-    const lat = R.stats.reduce((s, x) => s + x.ms, 0) / n;
-    $r('remoteStats').textContent = `초당 ${fps.toFixed(1)}장 · 한 장 ${Math.round(kb)}KB · 받는 데 ${Math.round(lat)}ms · ${Math.round(fps * kb)}KB/s`;
+    const kb = R.stats.reduce((a, x) => a + x.bytes, 0) / n / 1024;
+    const lat = R.stats.reduce((a, x) => a + x.ms, 0) / n;
+    const total = R.stats.reduce((a, x) => a + x.bytes, 0) / 2 / 1024;
+    $r('remoteStats').textContent = `초당 ${fps.toFixed(1)}번 갱신 · 한 번 평균 ${kb < 10 ? kb.toFixed(1) : Math.round(kb)}KB · 받는 데 ${Math.round(lat)}ms · ${Math.round(total)}KB/s · 조각 ${R.stats[n - 1].rects}개`;
   }
 
   function clearCanvas() { const c = $r('remoteCanvas'); c.getContext('2d').clearRect(0, 0, c.width, c.height); $r('remoteStats').textContent = ''; }

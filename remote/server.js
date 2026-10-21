@@ -12,6 +12,12 @@
 //   에이전트(주인)가 "조종 허용"을 켜 둬야 하고(agent/control), 보는 사람이 "조종 켜기"(view/control)를 눌러야 하며,
 //   PIN 을 통과한 사람의 입력만 에이전트로 전달한다(view/input). 입력 내용은 저장·기록하지 않고 그대로 전달만 한다.
 //
+// 바뀐 부분만 (이슈 #24): 에이전트는 화면을 칸으로 나눠 바뀐 칸만 "조각"(patch)으로 보내고, 가끔 전체 화면 "키 프레임"(key)을 보낸다.
+//   서버는 이미지를 디코딩하지 않는다. 키 프레임 1장 + 그 뒤 조각들(번호 순서)만 메모리에 짧게 들고 있다가,
+//   보는 사람이 "마지막으로 받은 번호(since)" 이후 것만 한 번에 묶어 준다. 너무 뒤처졌거나 처음이면 키 프레임부터.
+//   조각이 키 프레임보다 많이 쌓이면 에이전트에게 새 키 프레임을 요청한다 (응답 본문 'key').
+//   묶음 형식(큰 값은 big-endian): 'TTF1' | u32 번호 | u16 화면가로 | u16 화면세로 | u16 개수 | 개수 × { u16 x, u16 y, u16 w, u16 h, u32 길이, 이미지 }
+//
 // 기록 원칙: 화면 프레임은 **최신 한 장만 메모리에 덮어쓴다.** 디스크·로그에 아무것도 쓰지 않는다 (PIN 포함).
 // 전송: 기존 SSE + POST 재사용 (의존성 0).
 //   에이전트 → 서버   POST /api/remote/frame   (JPEG 한 장)
@@ -20,10 +26,28 @@
 const KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 const PIN_RE = /^[0-9]{6,12}$/;
 const FRAME_MAX = 4 * 1024 * 1024;
+const PATCH_MAX_RECTS = 32, PATCH_BYTES_SOFT = 256 * 1024, PATCH_BYTES_HARD = 6 * 1024 * 1024, PATCH_COUNT_SOFT = 400; // 조각이 이만큼 쌓이면 새 키 프레임 요청 / 이 이상이면 버리고 키 프레임을 기다림
 const TOKEN_GRACE = 30 * 1000;       // SSE 를 안 연 입장권은 이 시간 뒤 버림
 const VIEWER_FAILS = 5;               // 보는 사람(입장권) 하나당 틀릴 수 있는 횟수
 const NS_FAILS = 10, NS_WINDOW = 10 * 60 * 1000; // 같은 열쇠 전체: 10분에 10번
 const INPUT_BODY = 16 * 1024, INPUT_BATCH = 120, INPUT_PER_SEC = 600; // 입력 한 묶음 크기·개수, 보는 사람당 초당 한도
+
+// 이미지(JPEG·PNG) 첫 바이트만 확인 — 서버는 디코딩하지 않는다
+const isImage = (b) => b.length > 8 && ((b[0] === 0xff && b[1] === 0xd8) || (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47));
+// 에이전트가 보낸 조각 묶음 검사: u8 개수 | 개수 × { u16 x, y, w, h, u32 길이, 이미지 } — 길이 합이 정확히 맞고 화면 안이어야 한다
+function parseBundle(buf, W, H) {
+  if (buf.length < 1) return null;
+  const n = buf[0]; if (n < 1 || n > PATCH_MAX_RECTS) return null;
+  let o = 1; const rects = [];
+  for (let i = 0; i < n; i++) {
+    if (o + 12 > buf.length) return null;
+    const x = buf.readUInt16BE(o), y = buf.readUInt16BE(o + 2), w = buf.readUInt16BE(o + 4), h = buf.readUInt16BE(o + 6), len = buf.readUInt32BE(o + 8); o += 12;
+    if (!w || !h || x + w > W || y + h > H || !len || o + len > buf.length) return null;
+    const img = buf.subarray(o, o + len); if (!isImage(img)) return null;
+    rects.push({ x, y, w, h, buf: Buffer.from(img) }); o += len; // 복사해 둔다 (요청 버퍼를 계속 붙잡지 않게)
+  }
+  return o === buf.length ? rects : null;
+}
 
 // 입력 이벤트 한 개를 검사해 정리한다 (모르는 모양은 버린다). 좌표는 화면 비율 0~1
 const num = (x, lo, hi) => (Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : null);
@@ -56,7 +80,7 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
 
   function session(ns) {
     let s = sessions.get(ns);
-    if (!s) { s = { ns, agent: null, viewers: new Map(), frame: null, seq: 0, fails: [] }; sessions.set(ns, s); }
+    if (!s) { s = { ns, agent: null, viewers: new Map(), frame: null, key: null, patches: [], patchBytes: 0, seq: 0, fails: [] }; sessions.set(ns, s); }
     return s;
   }
   function gc(s) { if (!s.agent && !s.viewers.size) sessions.delete(s.ns); } // 다 나가면 프레임까지 사라진다
@@ -83,7 +107,7 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
     const s = sessions.get(t.ns);
     if (!s) return;
     if (t.role === 'agent' && s.agent?.token === token) {
-      s.agent.res?.end(); s.agent = null; s.frame = null;
+      s.agent.res?.end(); s.agent = null; s.frame = null; s.key = null; s.patches = []; s.patchBytes = 0;
       // 에이전트가 다시 시작되면 PIN 이 바뀌었을 수 있다 → 모두 다시 인증
       for (const v of s.viewers.values()) { clearTimeout(v.pendingTimer); v.pendingTimer = null; v.ok = false; v.control = false; }
       notifyAll(s, { type: 'agent', online: false });
@@ -267,13 +291,27 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
       const a = auth(url, 'agent');
       if (!a || a.s?.agent?.token !== a.token) { send(res, 401, '다시 연결해야 해요'); return true; }
       body(FRAME_MAX, (buf) => {
-        if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return send(res, 400, 'JPEG 가 아니에요');
-        const w = Math.min(8192, Number(url.searchParams.get('w')) || 0), h = Math.min(8192, Number(url.searchParams.get('h')) || 0);
         const s = a.s;
+        if (!s.agent || s.agent.token !== a.token) return send(res, 409, 'gone');
+        const kind = url.searchParams.get('kind') === 'patch' ? 'patch' : 'key';
+        const w = Math.min(8192, Number(url.searchParams.get('w')) || 0), h = Math.min(8192, Number(url.searchParams.get('h')) || 0);
         if (!okViewers(s).length) return send(res, 200, 'idle'); // 인증된 보는 사람이 없으면 받지 않는다
-        s.frame = { buf, seq: ++s.seq, w, h, at: Date.now() };   // 최신 한 장만 — 이전 프레임은 버려진다
-        notifyOk(s, { type: 'frame', seq: s.frame.seq, w, h });
-        send(res, 200, 'ok');
+        if (kind === 'key') {
+          if (!isImage(buf) || !w || !h) return send(res, 400, '이미지가 아니에요');
+          s.key = { buf, seq: ++s.seq, w, h };        // 키 프레임이 오면 이전 키·조각은 모두 버려진다
+          s.patches = []; s.patchBytes = 0;
+        } else {
+          if (!s.key || s.key.w !== w || s.key.h !== h) return send(res, 200, 'key'); // 기준이 없거나 화면 크기가 바뀜 → 키 프레임부터
+          const rects = parseBundle(buf, w, h);
+          if (!rects) return send(res, 400, '조각 묶음이 올바르지 않아요');
+          const seq = ++s.seq;
+          for (const r of rects) { s.patches.push({ seq, ...r }); s.patchBytes += r.buf.length; }
+          if (s.patchBytes > PATCH_BYTES_HARD) { s.key = null; s.patches = []; s.patchBytes = 0; return send(res, 200, 'key'); } // 안전 상한: 버리고 키 프레임을 기다림
+        }
+        s.frame = { seq: s.seq, w, h };
+        notifyOk(s, { type: 'frame', seq: s.seq, w, h });
+        const wantKey = s.patchBytes > Math.max(PATCH_BYTES_SOFT, s.key.buf.length * 2) || s.patches.length > PATCH_COUNT_SOFT;
+        send(res, 200, wantKey ? 'key' : 'ok');
       });
       return true;
     }
@@ -281,10 +319,22 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
       const a = auth(url, 'viewer');
       if (!a || !a.s?.viewers.has(a.token)) { send(res, 401, '다시 연결해야 해요'); return true; }
       if (!a.s.viewers.get(a.token).ok) { send(res, 403, 'PIN 을 먼저 확인해야 해요'); return true; } // 인증 전에는 화면을 주지 않는다
-      const f = a.s.frame;
-      if (!f) { send(res, 404, '아직 화면이 없어요'); return true; }
-      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': f.buf.length, 'Cache-Control': 'no-store', 'X-Frame-Seq': f.seq });
-      res.end(f.buf);
+      const s = a.s, k = s.key;
+      if (!k) { send(res, 404, '아직 화면이 없어요'); return true; }
+      if (!url.searchParams.has('since')) { // 이전 방식: 가장 최근 키 프레임 한 장 (이미지 그대로)
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': k.buf.length, 'Cache-Control': 'no-store', 'X-Frame-Seq': k.seq });
+        res.end(k.buf);
+        return true;
+      }
+      const since = Number(url.searchParams.get('since')) || 0;
+      if (since >= s.seq) { res.writeHead(204, { 'Cache-Control': 'no-store', 'X-Frame-Seq': s.seq }); res.end(); return true; } // 새 것이 없음
+      const rects = since < k.seq ? [{ x: 0, y: 0, w: k.w, h: k.h, buf: k.buf }, ...s.patches] : s.patches.filter((p) => p.seq > since); // 뒤처졌거나 처음이면 키부터
+      const head = Buffer.alloc(16); head.write('TTF1', 0, 'latin1'); head.writeUInt32BE(s.seq, 4); head.writeUInt16BE(k.w, 8); head.writeUInt16BE(k.h, 10); head.writeUInt16BE(rects.length, 12);
+      const parts = [head.subarray(0, 14)];
+      for (const r of rects) { const rh = Buffer.alloc(12); rh.writeUInt16BE(r.x, 0); rh.writeUInt16BE(r.y, 2); rh.writeUInt16BE(r.w, 4); rh.writeUInt16BE(r.h, 6); rh.writeUInt32BE(r.buf.length, 8); parts.push(rh, r.buf); }
+      const out = Buffer.concat(parts);
+      res.writeHead(200, { 'Content-Type': 'application/x-tt-frames', 'Content-Length': out.length, 'Cache-Control': 'no-store', 'X-Frame-Seq': s.seq });
+      res.end(out);
       return true;
     }
 

@@ -107,7 +107,7 @@ async function startAgent({ pin = PIN, cfg, withCode = true } = {}) {
     ok(good.ev?.ok === true, '맞는 PIN → 에이전트가 인증을 허락함');
     await sleep(3500);
     const frames = v.lv.all('frame');
-    ok(frames.length >= 5, `인증되자 에이전트가 화면을 보내기 시작 (3.5초에 ${frames.length}장 ≈ 초당 ${(frames.length / 3.5).toFixed(1)}장)`);
+    ok(frames.length >= 1, `인증되자 에이전트가 화면을 보내기 시작 — 첫 화면은 전체(키 프레임), 이후는 바뀐 곳만이라 정적인 화면에서는 적게 옴 (3.5초에 ${frames.length}번)`);
     ok(bannerVisible() === 'visible', '인증된 사람이 보는 동안 "원격 접속 중" 띠가 화면에 떠 있음');
 
     // 띠가 다른 창에 가려지는 상황 — 내리는 것과 확인을 한 호출 안에서 한다 (따로 확인하면 그 사이 에이전트가 먼저 올려 버려 의미가 없어진다)

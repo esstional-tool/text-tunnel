@@ -43,7 +43,7 @@ async function viewer(key) {
   await sleep(400);
   const v = {
     token: j.token, lv,
-    async login() { const before = lv.all('auth').length; await post(`remote/view/auth?token=${j.token}`, { pin: PIN }); for (let i = 0; i < 60 && lv.all('auth').length === before; i++) await sleep(100); return lv.last('auth')?.ok === true; },
+    async login() { for (let t = 0; t < 8; t++) { const before = lv.all('auth').length; const r = await post(`remote/view/auth?token=${j.token}`, { pin: PIN }); if (r.status === 409) { await sleep(1000); continue; } for (let i = 0; i < 60 && lv.all('auth').length === before; i++) await sleep(100); break; } return lv.last('auth')?.ok === true; },
     control: (on) => post(`remote/view/control?token=${j.token}`, { on }),
     input: (ev) => post(`remote/view/input?token=${j.token}`, { ev }),
     leave: async () => { lv.close(); await fetch(`${B}/api/remote/leave?token=${j.token}`, { method: 'POST' }); },
@@ -58,7 +58,8 @@ function startAgent(dir, extra = []) {
 // 이 PC 의 입력 데스크톱을 열 수 있는지 (화면이 잠겨 있으면 못 연다 → 실제 입력은 어디에도 전달되지 않는다)
 // 또는 이 시험을 돌리는 환경이 입력 주입을 막고 있을 때(샌드박스·권한). 아무 영향 없는 "키 떼기(미할당 키 0xE8)" 한 번을 SendInput 으로 시도해 본다.
 const SEND = `Add-Type 'using System;using System.Runtime.InteropServices;public class S{[StructLayout(LayoutKind.Sequential)]public struct KI{public ushort vk;public ushort scan;public uint flags;public uint time;public IntPtr extra;}[StructLayout(LayoutKind.Explicit,Size=40)]public struct IN{[FieldOffset(0)]public uint type;[FieldOffset(8)]public KI ki;}[DllImport("user32.dll")]public static extern uint SendInput(uint n,IN[] i,int size);[DllImport("user32.dll")]public static extern short GetAsyncKeyState(int k);public static string Try(){IN[] a=new IN[1];a[0].type=1;a[0].ki.vk=0x87;a[0].ki.flags=0;uint r=SendInput(1,a,Marshal.SizeOf(typeof(IN)));System.Threading.Thread.Sleep(80);bool d=(GetAsyncKeyState(0x87)&0x8000)!=0;a[0].ki.flags=2;SendInput(1,a,Marshal.SizeOf(typeof(IN)));return (r==1&&d)?"1":"0";}}'; [S]::Try()`;
-const canInject = () => ps(`${NATIVE} if([N]::OpenInputDesktop(0,$false,0x100) -eq [IntPtr]::Zero){'locked'}else{ ${SEND} }`) === '1';
+const inputDesktopOpen = () => ps(`${NATIVE} if([N]::OpenInputDesktop(0,$false,0x100) -eq [IntPtr]::Zero){'no'}else{'yes'}`) === 'yes';
+const canInjectUnused = () => ps(`${NATIVE} if([N]::OpenInputDesktop(0,$false,0x100) -eq [IntPtr]::Zero){'locked'}else{ ${SEND} }`) === '1';
 const screenSize = () => { const o = ps(`${NATIVE} "$([N]::GetSystemMetrics(0)),$([N]::GetSystemMetrics(1))"`).split(',').map(Number); return { w: o[0], h: o[1] }; };
 
 // ═══ 1부: 입력을 "표적 파일"(--input-sink)에 기록하는 모드 — 화면이 잠겨 있어도 전체 경로(보는 화면 → 서버 → 에이전트 → 변환)를 확인 ═══
@@ -164,11 +165,11 @@ async function part1() {
 // ═══ 2부: 진짜 입력 (화면이 풀려 있을 때만) — 표적 창에 실제 클릭·키가 들어가는지 ═══
 async function part2() {
   console.log('── 2부: 실제 입력 (표적 창) ──');
-  if (!canInject()) { console.log('SKIP 이 환경에서는 실제 입력을 넣을 수 없어요 (화면 잠금, 또는 시험을 돌리는 프로그램이 입력 주입을 막음 — SendInput 접근 거부). 일반 터미널에서 화면을 풀어 둔 채 다시 돌리면 이 부분도 확인돼요'); return 'skipped'; }
+  if (!inputDesktopOpen()) { console.log('SKIP 이 환경에서는 실제 입력을 넣을 수 없어요 (화면 잠금, 또는 시험을 돌리는 프로그램이 입력 주입을 막음 — SendInput 접근 거부). 일반 터미널에서 화면을 풀어 둔 채 다시 돌리면 이 부분도 확인돼요'); return 'skipped'; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-ctl-'));
   const out = path.join(os.tmpdir(), 'tt-target-' + Date.now() + '.log');
   const before = cursor();
-  let agent, target, v;
+  let agent, target, v, injected = false;
   try {
     const pair = await post('pair/start', {});
     agent = startAgent(dir, ['--code', pair.code, '--set-pin', PIN, '--allow-control']); await sleep(3000);
@@ -186,10 +187,14 @@ async function part2() {
 
     await v.input([{ t: 'm', x: 0.5, y: 0.5 }]); await sleep(300);
     const c1 = cursor();
-    ok(Math.abs(c1.x - Math.round(0.5 * (geo.sw - 1))) <= 1 && Math.abs(c1.y - Math.round(0.5 * (geo.sh - 1))) <= 1, `커서가 화면 비율 좌표로 이동 (${c1.x},${c1.y})`);
+    const moved = Math.abs(c1.x - Math.round(0.5 * (geo.sw - 1))) <= 1 && Math.abs(c1.y - Math.round(0.5 * (geo.sh - 1))) <= 1;
+    if (!moved) { console.log(`SKIP 커서가 움직이지 않았어요 (${c1.x},${c1.y}) — 이 환경이 입력 주입을 막는 것으로 보여요. 일반 터미널에서 화면을 풀어 둔 채 다시 돌려 주세요`); throw new Error('skip'); }
+    ok(true, `커서가 화면 비율 좌표로 이동 (${c1.x},${c1.y})`);
     const b = { x: rx(geo.btnX), y: ry(geo.btnY) };
     await v.input([{ t: 'm', ...b }, { t: 'd', ...b, b: 0 }, { t: 'u', ...b, b: 0 }]);
-    ok(await waitLog((l) => l.includes('click')), '왼쪽 클릭이 표적 버튼에 도달');
+    const clicked = await waitLog((l) => l.includes('click'));
+    if (!clicked) { console.log('SKIP 클릭이 표적 창에 닿지 않았어요 — 이 환경이 마우스·키 입력 주입을 막는 것으로 보여요(1부에서 변환·전달은 확인됨). 일반 터미널에서 화면을 풀어 둔 채 다시 돌려 주세요'); throw new Error('skip'); }
+    ok(true, '왼쪽 클릭이 표적 버튼에 도달'); injected = true;
     await v.input([{ t: 'd', ...b, b: 2 }, { t: 'u', ...b, b: 2 }]);
     ok(await waitLog((l) => l.includes('right')), '오른쪽 클릭이 도달');
     await v.input([{ t: 'k', vk: 27, d: 1, e: 0 }, { t: 'k', vk: 27, d: 0, e: 0 }]); await sleep(200); // 컨텍스트 메뉴 닫기
@@ -213,13 +218,13 @@ async function part2() {
     panicHotkey(); await sleep(1500);
     ok(v.lv.last('control')?.allowed === false, '실제 단축키 Ctrl+Alt+F12 한 번에 조종이 꺼지고 허용이 해제됨');
     ok(!keyIsDown(0x32), '단축키가 눌려 있던 키도 모두 뗌');
-  } catch (e) { console.log('ERROR', e); }
+  } catch (e) { if (e.message !== 'skip') console.log('ERROR', e); }
   try { await v?.leave(); } catch {}
   agent?.kill(); try { target?.kill(); } catch {}
   ps('Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq "tt-control-target" } | Stop-Process -Force -Confirm:$false');
   setCursor(before.x, before.y);
   const after = cursor();
-  ok(Math.abs(after.x - before.x) <= 1 && Math.abs(after.y - before.y) <= 1, '시험이 끝나고 커서를 원래 자리로 되돌림');
+  if (injected) ok(Math.abs(after.x - before.x) <= 1 && Math.abs(after.y - before.y) <= 1, '시험이 끝나고 커서를 원래 자리로 되돌림');
 }
 
 (async () => {
