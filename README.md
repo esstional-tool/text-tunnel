@@ -78,6 +78,7 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 - **무차별 대입 방어**: 에이전트에서 5번 틀리면 10분간 잠금 · 서버도 보는 기기당 5번, 열쇠당 10분에 10번으로 막음 (`REMOTE_AUTH_TIMEOUT_SEC` 로 확인 대기 시간 조절, 기본 8초)
 - **접속 기록**: 에이전트 옆 `access.log` 에 접속 시작/끝·PIN 실패를 남김 (PIN·열쇠·화면 내용은 기록 안 함)
 - **바뀐 부분만 전송 (이슈 #24)**: 에이전트가 화면을 64x64 칸으로 나눠 이전 화면과 비교하고, **바뀐 칸만 조각**으로 보낸다 (바뀐 게 없으면 아무것도 안 보냄 · 면적이 60% 이상 바뀌거나 10초마다·처음·서버 요청 시에는 전체 화면). 보는 화면은 조각을 캔버스에 덧그린다. 속도 표시에 갱신 횟수·평균 크기·조각 수가 나온다. (합성 화면 시험에서 초당 약 150KB → 약 6KB)
+- **화질·속도 자동 조절 (이슈 #25)**: 에이전트가 올리는 데 걸린 시간(이동평균)과 서버의 "보는 사람이 못 따라옴(slow)" 신호를 보고 **JPEG 품질(25~92)과 보내는 간격(100~600ms)을 스스로 내리고 올린다.** 조각마다 **JPEG 와 PNG 중 더 작은 것**을 보낸다 (글자·UI 같은 단순한 영역은 PNG 가 수십 배 작고 선명, 사진·잡음은 JPEG). 화면 위 선택칸에서 **자동 / 화질 우선 / 속도 우선**을 고를 수 있고(속도 우선은 가로 960px), 최종 범위는 에이전트가 정한다. 아래 줄에 현재 화질·전송 시간·PNG/JPEG 조각 수가 보인다
 - **기록**: 화면은 서버 메모리에 **키 프레임 1장 + 그 뒤 조각들만** 짧게 들고(조각이 많이 쌓이면 새 키 프레임으로 교체, 상한 6MB) 디스크에는 저장하지 않음 (보는 사람이 없으면 받지도 않음)
 - 서버 코드는 `remote/server.js` (`/api/remote/*`), 보는 화면은 `public/remote.js`, 에이전트(C#)는 `agent/` — 메신저와 분리된 모듈
 
@@ -122,13 +123,15 @@ node tests/replay.test.js http://localhost:8787                 # 놓친 메시�
 # REMOTE_AUTH_TIMEOUT_SEC=2 로 서버를 띄운 뒤
 node tests/remote-patch.test.js http://localhost:8787           # 바뀐 부분 서버 31항목 — 키 프레임/조각 저장·번호 이후 묶음·잘못된 묶음 거절·상한
 node tests/remote-dirty.test.js http://localhost:8787           # 바뀐 부분 진짜 에이전트(합성 화면 --fake-screen) — 바뀐 칸만 오는지·합쳐짐·주기적 전체 화면
+node tests/remote-quality.test.js http://localhost:8787         # 화질·속도 서버 15항목 — 프로필 전달·상태 전달·slow 표시
+node tests/remote-adapt.test.js http://localhost:8787           # 화질·속도 진짜 에이전트 13항목 (지연 프록시로 느린 네트워크 흉내: 화질↓→풀리면↑, 프로필, PNG/JPEG 선택)
 node tests/remote-control.test.js http://localhost:8787         # 조종(입력) 서버 32항목 — 허용 전 거절·PIN 전 거절·이상한 입력 버림·한도
 node tests/remote.test.js http://localhost:8787                 # 원격 서버 51항목 (가짜 에이전트가 PIN 확인)
 # Windows 전용 — agent\build-agent.cmd 로 빌드한 뒤. 에이전트가 이 PC 화면을 로컬 서버로 보냄:
 node tests/remote-agent.test.js http://localhost:8787           # 진짜 에이전트 32항목 (PIN 해시 저장·잠금·로그)
 # 위 둘 + Edge 를 --remote-debugging-port=9333 으로 띄운 뒤:
 node tests/remote-control-agent.test.js http://localhost:8787  # 조종 진짜 에이전트 — 1부(입력을 파일에 기록, 화면이 잠겨 있어도 됨) + 2부(진짜 입력, 풀려 있을 때만 / ⚠ 커서를 움직임)
-node tests/remote-ui.test.js http://localhost:8787              # 보는 화면 30항목 (PIN 입력·틀림·자동 재인증 + 조종 단추·입력 전달)
+node tests/remote-ui.test.js http://localhost:8787              # 보는 화면 38항목 (PIN 입력·틀림·자동 재인증 + 조종 단추·입력 전달 + 조각 덧그리기 픽셀 확인 + 화질·속도 선택)
 ```
 
 ## Render 배포

@@ -92,7 +92,18 @@ async function cdp(wsUrl) {
     fake([200, 300, 200, 100, 255, 0, 0], [900, 500, 100, 100, 0, 200, 0]); await sleep(1500); // 초록만 옆으로 옮김 → 그 부분만 조각으로 옴
     ok(near(await px(950, 550), [0, 200, 0]) && near(await px(850, 550), [28, 30, 54]) && near(await px(300, 350), [255, 0, 0]), `일부만 바뀌어도 나머지는 그대로이고 바뀐 곳만 갱신됨 (옛 자리는 바탕으로, 새 자리는 초록, 빨강은 유지)`);
     ok((await tab.evaluate(`document.getElementById('remoteStats').textContent`)).includes('조각'), '속도 표시에 조각 수가 보임');
-    startAnim();
+    // ── 화질·속도 (이슈 #25): 프로필 선택 → 에이전트가 따르고, 현재 상태가 표시됨
+    ok(await tab.evaluate(`!document.getElementById('remoteProfile').hidden`), 'PIN 통과 후 화질·속도 선택칸이 보임');
+    await sleep(2500); // (합성 화면은 빨강·초록 사각형 그대로 둔다 — 크기가 바뀐 뒤 위치 확인용)
+    const info1 = await tab.evaluate(`document.getElementById('remoteInfo').textContent`);
+    ok(/^자동 · 화질 [0-9]+ · 전송 [0-9]+ms · 간격 [0-9]+ms · PNG [0-9]+ [/] JPEG [0-9]+ 조각 · 1280px$/.test(info1), `에이전트가 알려 준 현재 화질·전송 시간·조각 형식 수가 표시됨: "${info1}"`);
+    await tab.evaluate(`(() => { const s = document.getElementById('remoteProfile'); s.value = 'speed'; s.dispatchEvent(new Event('change')); return 1; })()`); await sleep(4000);
+    const w960 = await tab.evaluate(`document.getElementById('remoteCanvas').width`);
+    const info2 = await tab.evaluate(`document.getElementById('remoteInfo').textContent`);
+    ok(w960 === 960 && info2.startsWith('속도 우선'), `"속도 우선"을 고르면 화면이 960px 로 줄고 표시가 바뀜: 캔버스 ${w960}px, "${info2}"`);
+    ok(near(await px(Math.round(950 * 0.75), Math.round(550 * 0.75)), [0, 200, 0]) && near(await px(Math.round(300 * 0.75), Math.round(350 * 0.75)), [255, 0, 0], 40), '크기가 바뀐 뒤에도 그림이 올바르게 다시 그려짐 (빨강·초록 위치가 비율대로)');
+    await tab.evaluate(`(() => { const s = document.getElementById('remoteProfile'); s.value = 'auto'; s.dispatchEvent(new Event('change')); return 1; })()`); await sleep(4000);
+    ok((await tab.evaluate(`document.getElementById('remoteCanvas').width`)) === 1280, '"자동"으로 되돌리면 1280px 로 복귀');
 
     // ── 조종 (이슈 #23): 단추 → 캔버스 이벤트 → 입력 묶음 → 에이전트 (실제 입력은 sink 파일에 기록)
     const ctl = () => tab.evaluate(`(() => { const b = document.getElementById('remoteCtl'); return { hidden: b.hidden, disabled: b.disabled, text: b.textContent, on: b.classList.contains('on'), stage: document.querySelector('.remote-stage').classList.contains('ctl') }; })()`);
