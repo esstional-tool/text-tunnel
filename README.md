@@ -12,6 +12,7 @@ DB 없이 내 PC와 휴대폰을 한 번 짝지어 두고, 앱만 열면 텍스�
 | [docs/FLOWS.md](docs/FLOWS.md) | [PDF](docs/pdf/FLOWS.pdf) | 흐름별 상세 해설 (API 명세 · 짝 맺기 · 업로드 · 확장 연결 단계별 · 펼쳐 보는 실제 코드) |
 | [docs/STUDY.md](docs/STUDY.md) | [PDF](docs/pdf/STUDY.pdf) | 다음 단계 공부 로드맵 (7단계 + 곁가지, 이 코드로 하는 실습 과제·참고 자료) |
 | 이 README | [PDF](docs/pdf/README.pdf) | 기능 목록 |
+| [docs/learn/](docs/learn/README.md) | — | **학습 노트**: 작업(이슈)마다 새로 쓴 기술 정리 · 실제 코드 · 스스로 확인 질문 |
 
 GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄·보관은 PDF 를 쓴다(코드 펼치기가 모두 열린 상태). 문서를 고친 뒤 PDF 다시 만들기: `node scripts/docs-pdf.js` (gh 로그인 + Edge 필요, 중간 파일은 임시 폴더에서 지워짐).
 
