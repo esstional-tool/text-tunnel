@@ -225,6 +225,53 @@ try {
   extZip = makeZip(fs.readdirSync(EXT_DIR).sort().map((f) => ({ name: `text-tunnel-cleaner/${f}`, data: fs.readFileSync(path.join(EXT_DIR, f)) })));
 } catch { /* extension 폴더가 없으면 다운로드만 비활성 */ }
 
+/* ── 원격 에이전트 zip (이슈 #30): 소스 + 빌드·실행 스크립트 + 안내. 요청마다 만든다 (서버 주소를 실행 명령에 넣으려고) ─── */
+const AGENT_DIR = path.join(__dirname, 'agent');
+function agentZip(req) {
+  let origin = '';
+  const host = String(req.headers.host || ''), proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
+  // 실행 명령(.cmd)에 들어가므로 아주 엄격히: 영문·숫자·. : - 만 (그 밖의 값이면 서버 주소를 넣지 않고 에이전트 기본값을 쓴다)
+  if (/^[A-Za-z0-9.:-]{1,100}$/.test(host) && /^https?$/.test(proto)) origin = `${proto}://${host}`;
+  const run = [
+    '@echo off',
+    'rem text-tunnel remote agent launcher: builds remote-agent.exe once (uses the C# compiler built into Windows), then starts it.',
+    'cd /d "%~dp0"',
+    'if not exist remote-agent.exe call "%~dp0build-agent.cmd"',
+    'if not exist remote-agent.exe (echo Build failed. & pause & exit /b 1)',
+    `start "" remote-agent.exe${origin ? ' --server ' + origin : ''} %*`,
+    '',
+  ].join('\r\n');
+  const readme = '\ufeff' + [
+    'text-tunnel 원격 에이전트 — 조종당할 PC(예: 노트북)에서 실행하는 작은 프로그램',
+    '',
+    '처음 한 번',
+    '  1) 앱 메뉴 → "이 PC 원격 허용 켜기" 화면에서 연결 코드를 만든다 (6자리, 5분 안에 한 번만 사용)',
+    '  2) 이 폴더에서 명령 프롬프트(또는 PowerShell)를 열고:   .\\run-agent.cmd --code 코드',
+    '     (처음에는 자동으로 빌드한다 — Windows 에 들어 있는 컴파일러라 따로 설치할 것은 없다)',
+    '  3) 시계 옆 트레이에 방패 아이콘이 생긴다. 우클릭 →',
+    '       · 접속 PIN 설정…      ← 먼저! PIN 을 정하기 전에는 아무도 이 PC 화면을 볼 수 없다',
+    '       · 원격 조종 허용      ← 마우스·키보드까지 쓰려면 켠다 (기본은 꺼짐 = 보기만)',
+    '       · Windows 시작 시 자동 실행  ← 컴퓨터를 켤 때마다 자동으로 켜 두려면 체크',
+    '       · 원격 허용 끄기(OFF) / 종료',
+    '',
+    '그다음부터',
+    '  .\\run-agent.cmd   (자동 실행을 켰다면 그것도 필요 없다)',
+    '',
+    '안전장치',
+    '  · 누가 보는 동안 화면 맨 위에 빨간 띠가 항상 떠 있다',
+    '  · 조종을 즉시 멈추기: Ctrl+Alt+F12, 트레이 메뉴, 또는 이 폴더가 아니라 설정 폴더에 panic.now 파일 만들기',
+    '  · 접속 기록: 설정 폴더(%APPDATA%\\text-tunnel-agent)의 access.log (PIN·화면 내용은 기록하지 않는다)',
+    '',
+  ].join('\r\n');
+  const files = [
+    { name: 'Program.cs', data: fs.readFileSync(path.join(AGENT_DIR, 'Program.cs')) },
+    { name: 'build-agent.cmd', data: Buffer.from(fs.readFileSync(path.join(AGENT_DIR, 'build-agent.cmd'), 'utf8').replace(/\r?\n/g, '\r\n')) }, // .cmd 는 줄 끝이 CRLF 여야 한다 (리눅스 서버의 LF 파일은 ^ 줄 이음이 깨져 빌드가 안 됨)
+    { name: 'run-agent.cmd', data: Buffer.from(run, 'utf8') },
+    { name: '읽어보세요.txt', data: Buffer.from(readme, 'utf8') },
+  ];
+  return makeZip(files.map((f) => ({ name: `text-tunnel-agent/${f.name}`, data: f.data })));
+}
+
 /* ── 라우트 ─────────────────────────────── */
 // 원격조종 (이슈 #17) — 메신저와 분리된 모듈
 const handleRemote = require('./remote/server')({ readBody, send, crypto, authTimeoutMs: (Number(process.env.REMOTE_AUTH_TIMEOUT_SEC) || 8) * 1000 }); // PIN 확인을 에이전트가 이 시간 안에 못 하면 실패 처리
@@ -235,6 +282,13 @@ const server = http.createServer((req, res) => {
   if (p === '/text-tunnel-cleaner.zip' && extZip) {
     res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Length': extZip.length, 'Content-Disposition': 'attachment; filename="text-tunnel-cleaner.zip"', 'Cache-Control': 'no-cache' });
     return res.end(extZip);
+  }
+  if (p === '/text-tunnel-agent.zip') {
+    try {
+      const z = agentZip(req);
+      res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Length': z.length, 'Content-Disposition': 'attachment; filename="text-tunnel-agent.zip"', 'Cache-Control': 'no-store' });
+      return res.end(z);
+    } catch { return send(res, 404, '에이전트 파일이 없어요'); }
   }
   if (!p.startsWith('/api/')) return serveStatic(url, res);
   if (p.startsWith('/api/remote/') && handleRemote(req, res, url)) return;

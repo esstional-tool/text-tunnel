@@ -67,7 +67,9 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 
 ### 6. 원격 화면 보기·조종 (이슈 #17 보기, #21 PIN, #23 조종)
 내 노트북 화면을 다른 내 PC 브라우저에서 보고, 허용하면 마우스·키보드로 조종한다.
-- **노트북에서 에이전트 실행**: `agent\build-agent.cmd` 로 빌드 (Windows 에 내장된 컴파일러라 설치 불필요, `agentemote-agent.exe` 생성) → 처음 한 번 `remote-agent.exe --code ABC123` (메신저 메뉴 → 새 기기 연결 의 코드, 같은 짝 열쇠를 받음) → 그다음부터는 `remote-agent.exe` 만. 시계 옆 트레이 아이콘에서 ON/OFF·종료
+- **앱에서 켜는 길 (이슈 #30)**: 앱 메뉴(PC) → **이 PC 원격 허용 켜기 (에이전트)** — 에이전트가 켜져 있는지 **실시간 상태** 표시 · ① **에이전트 받기**(서버가 `/text-tunnel-agent.zip` 제공: 소스 + 빌드·실행 스크립트 + 안내, 서버 주소가 실행 명령에 자동으로 들어감) · ② **연결 코드 만들기**(실행 명령 `.\run-agent.cmd --code 123456` 을 복사, 5분·한 번) · ③ 트레이 설정 안내. 브라우저는 다른 프로그램의 마우스·키보드를 대신 눌러 줄 수 없어 에이전트 프로그램은 필요하다
+- **Windows 시작 시 자동 실행**: 트레이 메뉴 체크 (또는 `--autostart on|off`) — 시작 프로그램(HKCU Run)에 등록/삭제, 관리자 권한 불필요
+- **노트북에서 에이전트 실행** (직접 빌드하는 방법): `agent\build-agent.cmd` 로 빌드 (Windows 에 내장된 컴파일러라 설치 불필요, `agentemote-agent.exe` 생성) → 처음 한 번 `remote-agent.exe --code ABC123` (메신저 메뉴 → 새 기기 연결 의 코드, 같은 짝 열쇠를 받음) → 그다음부터는 `remote-agent.exe` 만. 시계 옆 트레이 아이콘에서 ON/OFF·종료
 - **접속 PIN (이슈 #21) — 조종당하는 PC 의 주인이 정한다**: 트레이 아이콘 메뉴 → **접속 PIN 설정…** (또는 `remote-agent.exe --set-pin 123456`, 6~12자리 숫자). **PIN 을 정하기 전에는 아무도 화면을 볼 수 없다.** PIN 은 에이전트 PC 에만 해시(PBKDF2)로 저장되고, 맞는지도 **서버가 아니라 에이전트가** 확인한다 (서버·보는 쪽은 PIN 을 저장하지 않음)
 - **보는 PC**: 메신저 메뉴 → **원격 화면 보기** → PIN 입력 → 초당 프레임·한 장 크기·KB/s 가 함께 표시됨
 - **안전장치**: 보는 동안 노트북 화면 맨 위에 **빨간 "원격 접속 중" 띠**가 항상 떠 있고(1초마다 다시 맨 위로 — 다른 창이 덮어도 복구) · 누가 보기 시작하는 순간 **토스트 알림 + 소리**, 끝나면 토스트 (`--quiet` 로 끌 수 있음). **알림은 조종당하는 PC 에서만 나오고 보는 쪽에는 없음** · 보는 사람이 없으면 화면을 찍지도 보내지도 않음 · 트레이에서 언제든 OFF · 같은 짝 열쇠를 가진 기기만 볼 수 있음
@@ -123,6 +125,8 @@ node tests/replay.test.js http://localhost:8787                 # 놓친 메시�
 # REMOTE_AUTH_TIMEOUT_SEC=2 로 서버를 띄운 뒤
 node tests/remote-patch.test.js http://localhost:8787           # 바뀐 부분 서버 31항목 — 키 프레임/조각 저장·번호 이후 묶음·잘못된 묶음 거절·상한
 node tests/remote-dirty.test.js http://localhost:8787           # 바뀐 부분 진짜 에이전트(합성 화면 --fake-screen) — 바뀐 칸만 오는지·합쳐짐·주기적 전체 화면
+node tests/agent-zip.test.js http://localhost:8787               # 에이전트 zip 17항목 (내용·CRC·주입 방어·zip 만으로 빌드·자동 실행 등록/삭제) — Windows
+node tests/remote-host-ui.test.js http://localhost:8787         # "이 PC 원격 허용 켜기" 화면 14항목 (Edge) — Windows
 node tests/remote-quality.test.js http://localhost:8787         # 화질·속도 서버 15항목 — 프로필 전달·상태 전달·slow 표시
 node tests/remote-adapt.test.js http://localhost:8787           # 화질·속도 진짜 에이전트 13항목 (지연 프록시로 느린 네트워크 흉내: 화질↓→풀리면↑, 프로필, PNG/JPEG 선택)
 node tests/remote-control.test.js http://localhost:8787         # 조종(입력) 서버 32항목 — 허용 전 거절·PIN 전 거절·이상한 입력 버림·한도
