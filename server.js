@@ -130,7 +130,8 @@ function readBody(req, limit, cb) {
   req.on('data', (c) => {
     if (over) return;
     size += c.length;
-    if (size > limit) { over = true; cb(new Error('too large')); req.destroy(); return; }
+    // 413 응답이 나갈 시간을 준 뒤에 끊는다 — 바로 destroy 하면 응답이 도착하기 전에 연결이 끊겨 보내는 쪽은 오류만 받는다 (이슈 #17)
+    if (size > limit) { over = true; cb(new Error('too large')); setTimeout(() => req.destroy(), 1000).unref(); return; }
     chunks.push(c);
   });
   req.on('end', () => { if (!over) cb(null, Buffer.concat(chunks)); });
@@ -225,6 +226,9 @@ try {
 } catch { /* extension 폴더가 없으면 다운로드만 비활성 */ }
 
 /* ── 라우트 ─────────────────────────────── */
+// 원격조종 (이슈 #17) — 메신저와 분리된 모듈
+const handleRemote = require('./remote/server')({ readBody, send, crypto, authTimeoutMs: (Number(process.env.REMOTE_AUTH_TIMEOUT_SEC) || 8) * 1000 }); // PIN 확인을 에이전트가 이 시간 안에 못 하면 실패 처리
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
@@ -233,6 +237,7 @@ const server = http.createServer((req, res) => {
     return res.end(extZip);
   }
   if (!p.startsWith('/api/')) return serveStatic(url, res);
+  if (p.startsWith('/api/remote/') && handleRemote(req, res, url)) return;
 
   if (p === '/api/health') return send(res, 200, 'ok');
 

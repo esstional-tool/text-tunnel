@@ -1,3 +1,5 @@
 node_modules/
 tools/
 *.log
+agent/remote-agent.exe
+agent/*.pdb
