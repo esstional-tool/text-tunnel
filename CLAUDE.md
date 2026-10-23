@@ -10,7 +10,7 @@ DB 없이 내 PC와 휴대폰을 QR 로 한 번 짝지어 두고 텍스트·사�
 |---|---|
 | 한 줄 소개 | PC ↔ 휴대폰 2대 전용 실시간 메신저. Node 서버 하나 + 바닐라 JS PWA + 흔적 지우기 브라우저 확장 |
 | 지켜야 할 원칙 | **DB·외부 저장소·외부 SaaS 금지** (Supabase·Pusher 등 제안하지 않기) · **기록 안 남김** — 디스크·로그에 대화·열쇠·방 이름을 쓰지 않음, 보관은 메모리에 짧게(파일 10분, 놓친 메시지 2분) · **의존성 0** (Node 기본 모듈만, 화면도 프레임워크 없음) · 최대 2대 |
-| GitHub | `esstional-tool/text-tunnel` (Private) |
+| GitHub | `esstional-tool/text-tunnel` (Public, 2026-10-23 전환 — 새로 올리는 파일에 비밀값·회사 정보·개인 정보를 넣지 말 것) |
 | 기본 브랜치 | main |
 | 병합 정책 | 사용자가 "확정 / 합쳐 / 다 해줘" 했을 때만. **병합 = Render 자동 재배포** → 열려 있던 앱 연결이 잠깐 끊김 |
 | 배포 | Render (무료, Web Service) — 플랫폼 참고서 `deploy-check/platforms/render.md` |
