@@ -1,9 +1,80 @@
-# text-tunnel
+# Text Tunnel (text-tunnel)
 
-> 만든 날짜: **2026-10-20** (저장소 생성) · 개발 시작 2026-10-14
-> 서비스: https://text-tunnel.onrender.com
+> 내 PC와 휴대폰을 한 번 짝지어 두면, 앱만 열어 **대화·사진·동영상·파일**을 주고받고 **다른 PC 화면도 보고 조종**하는 개인용 메신저. 대화는 어디에도 저장되지 않는다.
 
-DB 없이 내 PC와 휴대폰을 한 번 짝지어 두고, 앱만 열면 텍스트·사진·동영상·파일을 주고받는 개인용 메신저(PWA). 대화는 어디에도 저장되지 않는다.
+![Text Tunnel 화면 미리보기](docs/screenshots/overview.png)
+
+## 프로젝트 정보
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | 내 PC ↔ 내 휴대폰 사이 텍스트·사진·동영상·파일 전달, 내 다른 PC 화면 보기·조종 |
+| 성격 | **개인 프로젝트 · 비영리** — 광고·결제·외부 공개 서비스 없음, 공부를 겸해 만듦 (작업마다 [학습 노트](docs/learn/README.md)) |
+| 사용자 | 본인 1명 — 메신저는 PC·휴대폰 **최대 2대**, 원격은 같은 짝 열쇠를 가진 PC 에이전트 |
+| 지키는 원칙 | **DB·외부 저장소·SaaS 없음** · 서버에 기록 없음(메모리에만, 짧게) · **의존성 0**(Node 내장 모듈만) · QR 짝 맺기 |
+| 만든 날짜 | **2026-10-20** (저장소 생성) · 개발 시작 2026-10-14 |
+| 상태 | 사용 중 · 메신저 + 흔적 지우기 확장 + 원격 화면 보기·조종(1~4단계) + 파일 공유 + 토스·카카오톡풍 UI 까지 병합 완료 |
+
+## 배포 환경
+
+| 구분 | 내용 |
+|---|---|
+| 서비스 주소 | https://text-tunnel.onrender.com |
+| 호스팅 | **Render** — Web Service · Instance **Free** · 지역 Singapore(권장 설정으로 생성) · Runtime Node · Build Command 없음 · Start `node server.js` |
+| 배포 방식 | **`main` 에 병합하면 자동 재배포**(약 20초). 무료 플랜은 15분 동안 접속이 없으면 잠들고 다음 접속에 30초~1분 걸려 깨어남 → 앱에 "서버 깨우는 중" 화면 |
+| 서버 | Node.js 내장 `http` 만 사용 (SSE + POST) — 의존성 0 · `engines.node >= 20` · 개발은 Node 24 |
+| 저장소 | **DB 없음.** 메시지·파일은 서버 **메모리**에만(파일 10분 만료, 전체 300MB, 파일 하나 100MB). 브라우저에는 짝 열쇠만 저장 |
+| 환경 변수 | **Render 에는 따로 설정한 것이 없다** (`PORT` 는 Render 가 자동으로 넣음). 선택값은 아래 [실행](#실행) 표 |
+| 앱 형태 | PWA(홈 화면 설치, 휴대폰·PC) · 크롬/엣지 확장(방문 기록 지우기, 수동 설치) · 원격 에이전트(C# 5, Windows 내장 `csc.exe` 로 빌드, 앱에서 zip 으로 받기) |
+| 소스 관리 | GitHub 비공개 저장소 `esstional-tool/text-tunnel` · 기본 브랜치 `main` · 이슈 → 브랜치 → PR → 확정 후 병합 |
+| 개발 환경 | Windows 11 · Node.js 24 · Edge(헤드리스, 원격 디버깅으로 브라우저 시험) · GitHub CLI |
+| 자동 시험 | 서버·에이전트·브라우저 시험 약 360항목 (`tests/`, 아래 [시험](#시험)) |
+
+### 사용 계정
+
+| 서비스 | 계정 / 식별자 |
+|---|---|
+| GitHub | 조직 `esstional-tool` · 로그인 계정 `PlusUltraCode` (이 PC 의 GitHub CLI 에 영구 로그인) |
+| Render | 서비스 이름 `text-tunnel` · **GitHub 로그인으로 가입하는 방식**으로 안내해 만듦 · ⚠ **Render 계정의 이메일·워크스페이스 이름은 기록에 남아 있지 않다** → Render 대시보드 → Account Settings 에서 확인해 이 칸에 적을 것 |
+| 앱 시험 | 이 문서의 스크린샷은 **데모 화면(`#demo-…`)과 합성 화면(`--fake-screen`)** 으로 찍은 개발용 데이터이며 실제 대화·화면이 아님 |
+
+## 화면
+
+### 휴대폰 · PC 앱
+
+<table>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/01-welcome.png" width="210"><br><b>시작</b><br>짝 맺기 방법 고르기</td>
+    <td align="center" valign="top"><img src="docs/screenshots/02-qr.png" width="210"><br><b>QR 연결</b><br>PC 가 QR, 휴대폰이 찍기 · 6자리 코드</td>
+    <td align="center" valign="top"><img src="docs/screenshots/03-chat.png" width="210"><br><b>대화</b><br>카카오톡풍: 하늘색 배경, 노란 내 말풍선</td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/04-attach-preview.png" width="210"><br><b>보내기 전 미리보기</b><br>사진·파일을 한 번에 고르고 보내기</td>
+    <td align="center" valign="top"><img src="docs/screenshots/05-menu.png" width="210"><br><b>메뉴</b><br>새 기기 연결 · 원격 · 흔적 지우기</td>
+    <td align="center" valign="top"><img src="docs/screenshots/06-share.png" width="210"><br><b>다른 앱으로 공유</b><br>받은 파일을 카카오톡 등으로 (공유 버튼)</td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/07-chat-dark.png" width="210"><br><b>다크 모드</b><br>시스템 설정을 따라 자동</td>
+    <td></td><td></td>
+  </tr>
+</table>
+
+### 원격 화면 보기·조종 (PC)
+
+<table>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/08-host-setup.png" width="380"><br><b>이 PC 원격 허용 켜기</b><br>에이전트 받기 · 연결 코드 · 트레이 설정 안내</td>
+    <td align="center" valign="top"><img src="docs/screenshots/09-host-running.png" width="380"><br><b>에이전트가 켜지면</b><br>상태가 실시간으로 "켜져 있어요"</td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/10-remote-pin.png" width="380"><br><b>접속 PIN</b><br>원격 PC 주인이 정한 PIN 을 입력해야 보임</td>
+    <td align="center" valign="top"><img src="docs/screenshots/11-remote-view.png" width="380"><br><b>원격 화면</b><br>바뀐 부분만 전송 · 화질 자동 조절 · 속도 표시</td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/12-remote-control.png" width="380"><br><b>조종 켜기</b><br>마우스·키보드 (원격 PC 주인이 허용해야 함)</td>
+    <td></td>
+  </tr>
+</table>
 
 | 문서 | 인쇄용 | 내용 |
 |---|---|---|
