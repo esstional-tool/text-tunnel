@@ -88,6 +88,7 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 새 기기 연결(QR·코드) · 대화 지우기 · 원격 화면 보기(PC) · 방문 기록 지우기(PC) · 앱으로 설치 · 이 기기 이름 바꾸기 · 연결 해제
 
 ### 8. 기타
+- **받은 파일 공유하기 (이슈 #35)**: 받은 PDF·동영상(말풍선의 공유 버튼)·사진(크게 보기의 공유 버튼, 앨범은 아래 줄 "공유" = 그 말풍선의 사진 전부)을 누르면 **기기의 공유창**이 떠서 카카오톡·문자·메일 등 설치된 앱을 고를 수 있다. 브라우저 기본 기능(Web Share API)이라 카카오 SDK·앱 키·외부 스크립트·서버 변경이 없고, 앱은 외부로 아무것도 보내지 않는다(사용자가 고른 앱으로만). 파일 공유를 지원하지 않는 기기·형식이면 버튼이 숨겨진다. 큰 파일을 받는 사이 브라우저의 "사용자 동작" 허용이 만료되면 "한 번 더 눌러 주세요"가 나오고 두 번째 누름은 즉시 공유. 공유하려고 받아 둔 파일 사본은 기기 메모리에만 있고 대화를 지우면 같이 비워진다
 - **디자인 (이슈 #33)**: 화면·버튼·메뉴는 토스처럼(굵은 큰 제목, 회색 바탕+흰 카드, 파랑 강조, 둥근 큰 버튼, 바텀시트), 대화는 카카오톡처럼(하늘색 배경, 내 말풍선 노랑, 상대 흰색, 시간은 말풍선 옆). 색은 모두 `public/style.css` 맨 위 토큰 — 라이트/다크(시스템·수동)가 같은 토큰을 다시 정의
 - 휴대폰·PC 같은 화면, 다크 모드 자동
 - 홈 화면·바탕화면 아이콘으로 설치 (PWA). 작업 표시줄 아이콘이 싫으면 `edge://apps` 에서 '창으로 열기' 끄기
@@ -126,6 +127,7 @@ node tests/replay.test.js http://localhost:8787                 # 놓친 메시�
 # REMOTE_AUTH_TIMEOUT_SEC=2 로 서버를 띄운 뒤
 node tests/remote-patch.test.js http://localhost:8787           # 바뀐 부분 서버 31항목 — 키 프레임/조각 저장·번호 이후 묶음·잘못된 묶음 거절·상한
 node tests/remote-dirty.test.js http://localhost:8787           # 바뀐 부분 진짜 에이전트(합성 화면 --fake-screen) — 바뀐 칸만 오는지·합쳐짐·주기적 전체 화면
+node tests/share.test.js http://localhost:8787                    # 받은 파일 공유 21항목 (Edge — navigator.share 를 가짜로 바꿔 넘어가는 파일 확인, 폰이 서버에 올린 PDF 의 전체 경로 포함)
 node tests/agent-zip.test.js http://localhost:8787               # 에이전트 zip 17항목 (내용·CRC·주입 방어·zip 만으로 빌드·자동 실행 등록/삭제) — Windows
 node tests/remote-host-ui.test.js http://localhost:8787         # "이 PC 원격 허용 켜기" 화면 14항목 (Edge) — Windows
 node tests/remote-quality.test.js http://localhost:8787         # 화질·속도 서버 15항목 — 프로필 전달·상태 전달·slow 표시

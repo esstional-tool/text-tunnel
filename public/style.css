@@ -238,6 +238,8 @@ time { font-size: 11px; color: var(--chat-muted); white-space: nowrap; flex: non
 }
 .save-chip svg { width: 18px; height: 18px; }
 .bubble.media video + .save-chip { top: 8px; bottom: auto; }
+.save-chip.share { right: 48px; border: 0; cursor: pointer; }
+.bubble.media video + .save-chip + .save-chip { top: 8px; bottom: auto; }
 
 .bubble.doc { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; min-width: 220px; }
 .doc-icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; flex: none; background: color-mix(in srgb, currentColor 14%, transparent); }
@@ -245,7 +247,8 @@ time { font-size: 11px; color: var(--chat-muted); white-space: nowrap; flex: non
 .doc-meta b { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-meta small { font-size: 12px; opacity: .72; }
 .doc .save { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: inherit; flex: none; }
-.doc .save:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
+.doc .share { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: inherit; flex: none; }
+.doc .save:hover, .doc .share:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
 
 .bubble.pending { display: flex; flex-direction: column; gap: 6px; min-width: 200px; font-size: 13px; }
 .bubble.pending .bar { height: 3px; border-radius: 2px; background: color-mix(in srgb, currentColor 25%, transparent); overflow: hidden; }
@@ -320,6 +323,7 @@ time { font-size: 11px; color: var(--chat-muted); white-space: nowrap; flex: non
 .bubble.album.n1 img { aspect-ratio: auto; max-height: 52vh; }
 .album-foot { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; font-size: 12px; color: var(--muted); background: var(--bg-2); }
 .album-foot button { color: var(--accent); font-weight: 600; }
+.foot-actions { display: flex; gap: 14px; }
 
 /* ── 사진 크게 보기 ─────────────────────── */
 .viewer { position: fixed; inset: 0; z-index: 40; background: #000; display: grid; place-items: center; touch-action: pan-y; }

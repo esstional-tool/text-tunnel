@@ -234,6 +234,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const svg = (d) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.innerHTML = `<path d="${d}"/>`; return s; };
 const ICON_FILE = 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5';
 const ICON_DOWN = 'M12 4v12M6 11l6 6 6-6M5 20h14';
+const ICON_SHARE = 'M12 15V3M7.5 7.5L12 3l4.5 4.5M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7';
 
 // 이번 접속에서 보냈거나(from), 이 기기가 이전 접속에서 보낸 것(dev 표식)이면 내 메시지
 const isMine = (m) => m.from === myId || (!!myTag && m.dev === myTag);
@@ -274,6 +275,48 @@ function linkify(node, text) {
   node.append(text.slice(last));
 }
 
+/* ── 다른 앱으로 공유 (이슈 #35) ────────────────────
+   기기의 공유창(Web Share API)을 띄워 카카오톡·문자·메일 등 설치된 앱을 사용자가 고르게 한다. 카카오 SDK·앱 키·서버 변경 없음.
+   파일은 기기 메모리에만 잠깐 둔다 (대화를 지우면 같이 비움). 이 기기·형식이 파일 공유를 못 하면 버튼을 숨긴다. */
+const shareCache = new Map(); // src -> File: 한 번 받아 둔 파일 (허용이 만료돼 다시 눌러야 할 때 바로 공유하려고)
+let shareBusy = false;
+function canShareFiles() {
+  try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [new File(['x'], 'a.pdf', { type: 'application/pdf' })] })); } catch { return false; }
+}
+async function toShareFile(it) {
+  if (shareCache.has(it.src)) return shareCache.get(it.src);
+  const r = await fetch(it.src);
+  if (!r.ok) throw new Error('fetch');
+  const f = new File([await r.blob()], it.fname, { type: it.mime || 'application/octet-stream' });
+  shareCache.set(it.src, f);
+  return f;
+}
+async function shareItems(items) {
+  if (shareBusy) return;
+  shareBusy = true;
+  try {
+    const needFetch = items.some((i) => !shareCache.has(i.src));
+    if (needFetch) toast('공유할 파일을 준비하는 중…');
+    const files = await Promise.all(items.map(toShareFile));
+    if (!navigator.canShare({ files })) { toast('이 파일은 공유할 수 없어요 · 저장해서 보내 주세요'); return; }
+    try { await navigator.share({ files }); }
+    catch (e) {
+      if (e.name === 'AbortError') return; // 사용자가 공유창을 닫음
+      if (e.name === 'NotAllowedError' && needFetch) { toast('준비됐어요 · 공유 버튼을 한 번 더 눌러 주세요'); return; } // 받는 사이 "사용자 동작" 허용이 만료됨
+      toast('공유하지 못했어요 · 저장해서 보내 주세요');
+    }
+  } catch { toast('파일을 가져오지 못했어요'); }
+  finally { shareBusy = false; }
+}
+function shareButton(items, cls) {
+  const b = el('button', cls); b.type = 'button'; b.title = '공유'; b.setAttribute('aria-label', '공유');
+  b.append(svg(ICON_SHARE));
+  b.onclick = () => shareItems(typeof items === 'function' ? items() : items);
+  b.hidden = !canShareFiles();
+  return b;
+}
+const imgItem = (i) => ({ src: i.src, fname: i.dataset.fname || 'photo', mime: i.dataset.mime });
+
 function saveLink(src, fname, cls) {
   const a = el('a', cls); a.href = src; a.download = fname; a.title = '저장'; a.setAttribute('aria-label', `${fname} 저장`);
   a.append(svg(ICON_DOWN));
@@ -283,7 +326,7 @@ function saveLink(src, fname, cls) {
 // 사진은 앨범 말풍선에 담는다. 한 번에 고른 사진(같은 batch)은 같은 말풍선에 이어 붙인다
 function addToAlbum(album, src, m) {
   const img = new Image(); img.src = src; img.alt = m.fname; img.loading = 'lazy';
-  img.dataset.fname = m.fname;
+  img.dataset.fname = m.fname; img.dataset.mime = m.mime || '';
   img.onclick = () => openViewer(img);
   const foot0 = album.querySelector('.album-foot');
   if (foot0) foot0.before(img); else album.append(img);
@@ -292,8 +335,15 @@ function addToAlbum(album, src, m) {
   if (n >= 2) {
     let foot = album.querySelector('.album-foot');
     if (!foot) {
-      foot = el('div', 'album-foot'); foot.append(el('span'), el('button', null, '모두 저장'));
-      foot.querySelector('button').onclick = () => saveAll(album);
+      const actions = el('div', 'foot-actions');
+      const all = el('button', null, '모두 저장'); all.onclick = () => saveAll(album);
+      actions.append(all);
+      if (canShareFiles()) { // 이 말풍선의 사진 전부를 공유창으로
+        const sh = el('button', null, '공유'); sh.type = 'button';
+        sh.onclick = () => shareItems([...album.querySelectorAll('img')].map(imgItem));
+        actions.append(sh);
+      }
+      foot = el('div', 'album-foot'); foot.append(el('span'), actions);
       album.append(foot);
     }
     foot.querySelector('span').textContent = `사진 ${n}장`;
@@ -338,13 +388,13 @@ function add(m) {
     } else if (isVid) {
       bubble = el('div', 'bubble media');
       const v = el('video'); v.src = src; v.controls = true; v.playsInline = true; v.preload = 'metadata';
-      bubble.append(v, saveLink(src, m.fname, 'save-chip'));
+      bubble.append(v, saveLink(src, m.fname, 'save-chip'), shareButton([{ src, fname: m.fname, mime: m.mime }], 'save-chip share'));
     } else {
       bubble = el('div', 'bubble doc');
       const ic = el('div', 'doc-icon'); ic.append(svg(ICON_FILE));
       const meta = el('div', 'doc-meta');
       meta.append(el('b', null, m.fname), el('small', null, `${fmtSize(m.size)} · 10분 뒤 만료`));
-      bubble.append(ic, meta, saveLink(src, m.fname, 'save'));
+      bubble.append(ic, meta, shareButton([{ src, fname: m.fname, mime: m.mime }], 'save share'), saveLink(src, m.fname, 'save'));
     }
   }
 
@@ -556,16 +606,19 @@ function showViewer() {
   if (!img) return closeViewer();
   $('viewerImg').src = img.src; $('viewerImg').alt = img.alt;
   $('viewerSave').href = img.src; $('viewerSave').download = img.dataset.fname || 'photo';
+  $('viewerShare').hidden = !canShareFiles();
   $('viewerCount').textContent = `${viewerIdx + 1} / ${viewerList.length}`;
   $('viewerPrev').hidden = viewerIdx === 0;
   $('viewerNext').hidden = viewerIdx === viewerList.length - 1;
 }
+$('viewerShare').onclick = () => { const i = viewerList[viewerIdx]; if (i) shareItems([imgItem(i)]); };
 const stepViewer = (d) => { const n = viewerIdx + d; if (n >= 0 && n < viewerList.length) { viewerIdx = n; showViewer(); } };
 const closeViewer = () => { $('viewer').hidden = true; $('viewerImg').removeAttribute('src'); };
 
 /* ── 대화 지우기 ───────────────────────── */
 function clearList() {
   closeViewer();
+  shareCache.clear(); // 공유하려고 받아 둔 파일 사본도 비운다
   $('list').innerHTML = '';
   $('scroller').classList.remove('has-msgs');
 }
