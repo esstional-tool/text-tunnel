@@ -462,6 +462,9 @@ function postChunk(uid, file, offset, batch, onProgress) {
   });
 }
 
+// 이 파일을 지금도 읽을 수 있는지 (한 바이트만 읽어 본다). 안드로이드는 고른 파일을 임시 참조로 줘서 나중에 사라질 수 있다
+const canRead = (file, offset = 0) => file.slice(offset, offset + 1).arrayBuffer().then(() => true, () => false);
+
 // 파일 하나를 8MB 조각으로 순서대로 올린다. 서버가 다 모이면 상대에게 알린다.
 // 연결 끊김·서버 재시작(Render 배포·깨어남)·입장권 만료에 대비해 최대 5번까지 다시 시도하며,
 // 다시 시도할 때는 서버에 받은 위치를 물어 이어서 올린다 (서버가 모르면 처음부터) — 이슈 #11
@@ -481,6 +484,8 @@ async function uploadOne(file, batch, onProgress, onRetry) {
     }
     // 다시 해도 똑같은 결과일 실패는 바로 알린다 (크기 초과, 서버 메모리 가득, 잘못된 요청)
     if ([400, 413, 507].includes(r.status)) throw new Error(r.text || '실패');
+    // 연결이 끊긴 것이 아니라 "파일을 못 읽는" 경우(고른 뒤 삭제·이동·클라우드에만 있음)는 다시 해도 소용없으니 바로 이유를 알린다 — 이슈 #40
+    if (r.status === 0 && !(await canRead(file, offset))) throw new Error('파일을 읽을 수 없어요 · 다시 골라 주세요');
     if (++tries > RETRY_MAX) throw new Error(r.status ? (r.text || `오류 ${r.status}`).slice(0, 80) : '연결이 끊겼어요');
     onRetry?.(tries);
     await sleep(1000 * 2 ** (tries - 1)); // 1·2·4·8·16초
@@ -533,14 +538,32 @@ async function sendFiles(files, original) {
 
 /* ── 보내기 전 미리보기 (트레이) ─────────── */
 let tray = []; // { file, url }
-function addToTray(files) {
-  const list = [...files];
+// 고른 파일을 보내기 전에도 쓸 수 있게 붙잡아 둔다 — 이슈 #40
+// 안드로이드는 고른 사진을 임시 참조(content://)로 주는데, "보내기"를 누를 때까지 기다리는 사이 카메라가 아직 저장 중이었거나
+// 구글 포토처럼 클라우드에만 있거나 지워지면 읽을 수 없게 된다("이미지를 찾을 수 없습니다"). 그래서 고르는 순간 사진 내용을 메모리로 복사해 두고,
+// 읽을 수 없는 파일은 그 자리에서 알린다. (사진 30MB 이하만 복사 — 동영상·큰 파일은 메모리를 아끼려고 읽을 수 있는지만 확인)
+const SNAPSHOT_MAX = 30 * 1024 * 1024;
+async function snapshot(file) {
+  try {
+    if (kindOf(file) === 'image' && file.size <= SNAPSHOT_MAX) {
+      return new File([await file.arrayBuffer()], file.name, { type: file.type, lastModified: file.lastModified });
+    }
+    await file.slice(0, 16).arrayBuffer();
+    return file;
+  } catch { return null; }
+}
+async function addToTray(files) {
+  const list = [...files]; // 입력칸을 비우기 전에 먼저 목록을 복사 (호출한 쪽이 곧바로 value 를 지운다)
   if (list.some((f) => !f.size)) toast('빈 파일은 뺐어요');
-  for (const file of list.filter((f) => f.size)) {
-    tray.push({ file, url: kindOf(file) === 'file' ? null : URL.createObjectURL(file) });
+  const bad = [];
+  for (const f of list.filter((x) => x.size)) {
+    const kept = await snapshot(f);
+    if (!kept) { bad.push(f.name); continue; }
+    tray.push({ file: kept, url: kindOf(kept) === 'file' ? null : URL.createObjectURL(kept) });
   }
   closeAttach();
   renderTray();
+  if (bad.length) toast(`${bad.length}개는 읽을 수 없어 뺐어요 · 삭제됐거나 클라우드에만 있을 수 있어요 (${bad.slice(0, 2).join(', ')})`);
 }
 
 function renderTray() {
