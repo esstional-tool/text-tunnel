@@ -17,6 +17,7 @@
 | 2026-10-20 | [#25](https://github.com/esstional-tool/text-tunnel/issues/25) · [#28](https://github.com/esstional-tool/text-tunnel/pull/28) | [화질 자동 조절·코덱 선택](2026-10-20-25-quality-codec.md) | EMA 피드백 제어(AIMD 비슷) · 종단 backpressure(slow) · JPEG/PNG 선택 · 프로필 · 지연 프록시 시험 |
 | 2026-10-21 | [#30](https://github.com/esstional-tool/text-tunnel/issues/30) · [#31](https://github.com/esstional-tool/text-tunnel/pull/31) | [앱에서 원격 허용 켜기](2026-10-21-30-host-onboarding.md) | 동적 zip(서버 주소 주입)·Host 헤더 주입 방어 · .cmd CRLF·%~dp0 · 시작 프로그램(HKCU Run) · 실시간 상태(SSE agent 알림) |
 | 2026-10-23 | [#35](https://github.com/esstional-tool/text-tunnel/issues/35) | [받은 파일 공유하기](2026-10-23-35-share-files.md) | navigator.share/canShare(파일) · 사용자 동작 허용 만료와 두 번 누르기 · 메모리에만 두고 지우면 비우기 · 브라우저 API 를 가짜로 심어 시험 |
+| 2026-10-26 | [#40](https://github.com/esstional-tool/text-tunnel/issues/40) | [고른 파일을 보낼 때까지 믿지 않기](2026-10-26-40-hold-picked-files.md) | File 은 참조일 수 있음·스냅샷 · 살아 있는 FileList · 같은 증상의 다른 원인 가르기 · 실패를 가짜 파일로 흉내 |
 
 ## 노트 쓰는 법 (다음 작업부터 같은 형식)
 

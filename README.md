@@ -117,6 +117,8 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 - **크기** — 파일 하나 100MB까지, 종류 무관 (8MB 조각으로 나눠 올림)
 - **끊겨도 이어서** — 업로드 중 연결이 끊기거나 서버가 재시작되면 자동으로 최대 5번 다시 시도하고, 받은 데까지 건너뛰어 이어서 올림 (같은 사진이 두 번 가지 않음)
 
+- **고른 사진은 바로 붙잡아 둠 (이슈 #40)**: 안드로이드는 고른 사진을 임시 참조로 줘서, 미리보기에 올려 두고 기다리는 사이 카메라가 아직 저장 중이거나 구글 포토처럼 클라우드에만 있거나 지워지면 "이미지를 찾을 수 없습니다"처럼 읽지 못했다. 이제 고르는 순간 사진 내용을 메모리로 복사하고(30MB 이하), 읽을 수 없는 파일은 그 자리에서 알리고 뺀다. 보내는 중 읽기 실패는 5번 다시 시도하지 않고 "파일을 읽을 수 없어요 · 다시 골라 주세요"로 바로 알린다
+
 ### 4. 기록 안 남기기 (앱 기본)
 - 대화는 어디에도 저장 안 됨 (새로고침·창 닫기 시 사라짐)
 - 사진·파일은 서버 메모리에 10분만 있다가 자동 삭제
@@ -198,6 +200,7 @@ node tests/replay.test.js http://localhost:8787                 # 놓친 메시�
 # REMOTE_AUTH_TIMEOUT_SEC=2 로 서버를 띄운 뒤
 node tests/remote-patch.test.js http://localhost:8787           # 바뀐 부분 서버 31항목 — 키 프레임/조각 저장·번호 이후 묶음·잘못된 묶음 거절·상한
 node tests/remote-dirty.test.js http://localhost:8787           # 바뀐 부분 진짜 에이전트(합성 화면 --fake-screen) — 바뀐 칸만 오는지·합쳐짐·주기적 전체 화면
+node tests/pick.test.js http://localhost:8787                     # 고른 파일 붙잡기 8항목 (Edge — 읽기가 실패하는 가짜 파일, 원본이 사라진 뒤에도 복사본 업로드)
 node tests/share.test.js http://localhost:8787                    # 받은 파일 공유 21항목 (Edge — navigator.share 를 가짜로 바꿔 넘어가는 파일 확인, 폰이 서버에 올린 PDF 의 전체 경로 포함)
 node tests/agent-zip.test.js http://localhost:8787               # 에이전트 zip 17항목 (내용·CRC·주입 방어·zip 만으로 빌드·자동 실행 등록/삭제) — Windows
 node tests/remote-host-ui.test.js http://localhost:8787         # "이 PC 원격 허용 켜기" 화면 14항목 (Edge) — Windows
