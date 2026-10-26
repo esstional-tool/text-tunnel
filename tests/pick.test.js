@@ -28,7 +28,22 @@ async function cdp(wsUrl) {
     window.badDoc = mk('사라진문서.pdf', 'application/pdf', 'x'); badDoc.slice = () => ({ arrayBuffer: gone });
     tray.length = 0; 1`);
 
-  // 1) 읽을 수 없는 것은 고르는 순간 알리고 뺀다
+  await q(`READ_RETRY_MS.length = 0; READ_RETRY_MS.push(30, 30, 30); 1`); // 시험에서는 기다림을 짧게 (실제는 0.6·1.2·2초)
+
+  // 0) 처음 두 번은 못 읽다가 세 번째에 읽히는 사진(카메라가 아직 저장 중)은 포기하지 않고 결국 포함한다
+  await q(`window.flaky = mk('저장중.jpg', 'image/jpeg', 'LATE-OK'); let n = 0; const real = flaky.arrayBuffer.bind(flaky); flaky.arrayBuffer = () => (++n <= 2 ? gone() : real()); window.flakyReads = () => n; 1`);
+  const tw = Date.now();
+  await q(`addToTray([flaky, goodDoc])`);
+  ok((await q(`tray.map((t) => t.file.name).join(',')`)) === '저장중.jpg,정상.pdf' && (await q(`flakyReads()`)) === 3, `처음 두 번 실패해도 다시 읽어 결국 포함 (읽기 ${await q('flakyReads()')}번, ${Date.now() - tw}ms, 순서 유지)`);
+  ok(!(await q(`document.getElementById('toast').textContent`)).includes('뺐어요'), '결국 읽혔으니 "뺐어요" 안내는 없음');
+  await q(`tray.length = 0; 1`);
+  // 정상 파일은 기다림 없이 바로 올라간다
+  const tf = Date.now();
+  await q(`addToTray([goodImg2 = mk('빠름.jpg', 'image/jpeg', 'FAST')])`);
+  ok(Date.now() - tf < 25 && (await q(`tray.length`)) === 1, `정상 사진은 지연 없이 바로 올라감 (${Date.now() - tf}ms)`);
+  await q(`tray.length = 0; 1`);
+
+  // 1) 끝까지 읽을 수 없는 것만 고르는 순간 알리고 뺀다
   await q(`addToTray([goodImg, badImg, badDoc, goodDoc])`);
   ok((await q(`tray.length`)) === 2 && (await q(`tray.map((t) => t.file.name).join(',')`)) === '정상.jpg,정상.pdf', `읽을 수 없는 사진·문서는 빼고 정상인 2개만 미리보기에 올림: ${await q(`tray.map((t) => t.file.name).join(',')`)}`);
   const toast = await q(`document.getElementById('toast').textContent`);

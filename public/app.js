@@ -543,24 +543,35 @@ let tray = []; // { file, url }
 // 구글 포토처럼 클라우드에만 있거나 지워지면 읽을 수 없게 된다("이미지를 찾을 수 없습니다"). 그래서 고르는 순간 사진 내용을 메모리로 복사해 두고,
 // 읽을 수 없는 파일은 그 자리에서 알린다. (사진 30MB 이하만 복사 — 동영상·큰 파일은 메모리를 아끼려고 읽을 수 있는지만 확인)
 const SNAPSHOT_MAX = 30 * 1024 * 1024;
-async function snapshot(file) {
-  try {
-    if (kindOf(file) === 'image' && file.size <= SNAPSHOT_MAX) {
-      return new File([await file.arrayBuffer()], file.name, { type: file.type, lastModified: file.lastModified });
+// 처음 읽기가 실패해도 바로 포기하지 않는다 (이슈 #42): 카메라가 아직 저장 중이거나 클라우드에서 내려받는 중인 사진은 잠깐 뒤에 읽히는 경우가 많다.
+// 이 간격(ms)마다 다시 읽어 보고 (약 4초), 그래도 안 되면 그때 제외한다. 시험에서는 간격을 줄인다
+const READ_RETRY_MS = [600, 1200, 2000];
+async function snapshot(file, onWait) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      if (kindOf(file) === 'image' && file.size <= SNAPSHOT_MAX) {
+        return new File([await file.arrayBuffer()], file.name, { type: file.type, lastModified: file.lastModified });
+      }
+      await file.slice(0, 16).arrayBuffer();
+      return file;
+    } catch {
+      if (attempt >= READ_RETRY_MS.length) return null;
+      if (attempt === 0) onWait?.();
+      await sleep(READ_RETRY_MS[attempt]);
     }
-    await file.slice(0, 16).arrayBuffer();
-    return file;
-  } catch { return null; }
+  }
 }
 async function addToTray(files) {
   const list = [...files]; // 입력칸을 비우기 전에 먼저 목록을 복사 (호출한 쪽이 곧바로 value 를 지운다)
   if (list.some((f) => !f.size)) toast('빈 파일은 뺐어요');
   const bad = [];
-  for (const f of list.filter((x) => x.size)) {
-    const kept = await snapshot(f);
-    if (!kept) { bad.push(f.name); continue; }
-    tray.push({ file: kept, url: kindOf(kept) === 'file' ? null : URL.createObjectURL(kept) });
-  }
+  const picked = list.filter((x) => x.size);
+  // 여러 장을 동시에 읽어, 기다려야 하는 사진이 있어도 전체가 오래 걸리지 않게 한다 (미리보기 순서는 고른 순서 그대로)
+  const kept = await Promise.all(picked.map((f) => snapshot(f, () => toast('사진을 읽는 중이에요… 잠깐만요'))));
+  picked.forEach((f, i) => {
+    if (!kept[i]) { bad.push(f.name); return; }
+    tray.push({ file: kept[i], url: kindOf(kept[i]) === 'file' ? null : URL.createObjectURL(kept[i]) });
+  });
   closeAttach();
   renderTray();
   if (bad.length) toast(`${bad.length}개는 읽을 수 없어 뺐어요 · 삭제됐거나 클라우드에만 있을 수 있어요 (${bad.slice(0, 2).join(', ')})`);
