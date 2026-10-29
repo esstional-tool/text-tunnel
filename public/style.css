@@ -142,6 +142,11 @@ input, textarea { font: inherit; color: var(--text); }
 .host-timer { margin: 8px 0 0 !important; font-size: 12px; }
 .host-note { margin: 18px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
 .remote-ctl { margin-left: auto; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 999px; padding: 6px 12px; font-weight: 600; font-size: 13px; font-family: inherit; cursor: pointer; }
+.remote-profile + .remote-zoom { margin-left: 6px; }
+.remote-zoom + .remote-ctl { margin-left: 6px; }
+/* 원본 크기(1:1) 보기 — 손가락·마우스로 밀어 이동 (이슈 #44) */
+.remote-stage.zoom { overflow: auto; place-items: start; -webkit-overflow-scrolling: touch; }
+.remote-stage.zoom canvas { max-width: none; max-height: none; width: auto; height: auto; }
 .remote-ctl:disabled { opacity: .5; cursor: not-allowed; }
 .remote-ctl.on { background: #b3125a; border-color: #b3125a; color: #fff; }
 .remote-stage canvas:focus { outline: none; }
