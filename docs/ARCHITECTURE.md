@@ -19,6 +19,7 @@
 10. [배포·운영: PaaS와 12-Factor](#10-배포운영-paas와-12-factor)
 11. [시험 전략](#11-시험-전략)
 12. [한계와 다음 단계 (공부 거리)](#12-한계와-다음-단계-공부-거리)
+13. [폰 원격 (안드로이드): 같은 프로토콜, 다른 몸](#13-폰-원격-안드로이드-같은-프로토콜-다른-몸)
 
 ---
 
@@ -1474,3 +1475,63 @@ function broadcast(room, ev) {
 
 </details>
 
+---
+
+## 13. 폰 원격 (안드로이드): 같은 프로토콜, 다른 몸
+
+> 이슈 #46(폰 원격 조종) · #48(휴대폰 원격 연결하기 버튼) · #50(보기 전용 앱). 위 §1~§12 는 2026-10-20 시점이고, 이 장이 그 뒤에 생긴 폰 쪽을 다룬다. 기술 목록은 [TECH.md](TECH.md).
+
+### 13-1. 설계: PC 에이전트의 프로토콜을 그대로 쓴다
+
+폰 앱은 PC 에이전트와 **같은 방식으로 서버에 입장**한다 (`agent/join` 에 `platform: "android"` 를 더 알림). 서버(`remote/server.js`)는 중계만 하므로 거의 안 바뀌었고, 보는 화면(`public/remote.js`)은 에이전트가 폰이면 **폰 도구줄**(뒤로·홈·최근·알림·글자 보내기)을 보여주는 정도만 더했다.
+
+```
+컴퓨터(브라우저)        서버(메모리)               폰 앱
+  원격 화면 보기 ──── view/join ───▶  ◀── agent/join (platform: android)
+  PIN 입력 ───────── auth ───────▶ ───▶  PIN 을 폰이 PBKDF2 로 직접 확인
+  ◀──── 화면 조각 ──── frame POST ◀───  MediaProjection 으로 찍은 JPEG
+  마우스·키보드 ───── input ───────▶ ───▶  접근성 서비스가 터치·글자로 번역
+```
+
+- **PIN 은 폰이 확인한다** — PC 때와 같다. 서버는 PIN 을 모르고, 폰이 정한 PIN 을 해시로만 저장.
+- **화면은 서버 메모리에만** — 보는 사람이 없으면 찍지도 보내지도 않는다.
+
+### 13-2. 폰 앱 안쪽
+
+| 파일 | 하는 일 |
+|---|---|
+| `MainActivity.kt` | 설정 화면(서버·짝 맺기·PIN·화면 공유·조종), 딥링크 `texttunnel://connect` 처리, 자동 연결 |
+| `AgentService.kt` | 포그라운드 서비스: 서버 연결(SSE)·인증·프레임 전송·조종 상태 보고 |
+| `ScreenCapture.kt` | MediaProjection + VirtualDisplay + ImageReader → JPEG |
+| `TunnelAccessibilityService.kt` | (조종 포함 앱만) `dispatchGesture` 로 탭·길게·스와이프·스크롤, `ACTION_SET_TEXT` 로 글자, 전역 동작 |
+| `Http.kt` · `PinStore.kt` · `Prefs.kt` | 외부 라이브러리 없는 HTTP·SSE, PBKDF2 PIN, 설정 저장 |
+
+안드로이드 14 의 규칙(포그라운드 서비스를 먼저 시작, 캡처 콜백을 VirtualDisplay 보다 먼저 등록, 토큰 하나에 VirtualDisplay 하나라 크기가 바뀌면 resize)을 지켜야 캡처가 시작된다 → [학습 노트 #46](learn/2026-10-29-46-phone-remote.md).
+
+### 13-3. "휴대폰 원격 연결하기" 버튼
+
+폰에서 누르면 `makePhoneLink()` 가 짝 코드를 미리 만들어(`pair/start`) 안드로이드 **인텐트 링크**를 건다.
+
+```
+intent://connect?code=ABC123&server=<서버>#Intent;scheme=texttunnel;package=<앱 ID>;
+  S.browser_fallback_url=<APK 주소>;end
+```
+
+크롬이 앱이 있으면 열고(→ `texttunnel://connect` 딥링크 → 자동 짝 맺기 → PIN → 화면 공유 허용), 없으면 폴백 주소의 APK 를 내려받게 한다. 웹은 앱이 설치됐는지 알 수 없어서 이 판단을 브라우저에 맡긴다. 연결되면 서버가 알리는 `agent` 이벤트로 화면에 "폰이 연결됐어요"가 실시간으로 뜬다 → [학습 노트 #48](learn/2026-10-29-48-phone-connect-button.md).
+
+### 13-4. 두 종류의 앱과 Play 프로텍트
+
+갤럭시는 Play 스토어 밖에서 받은 앱이 접근성 권한을 요청하면 Play 프로텍트로 설치를 막는다. 그래서 Gradle **product flavor** 로 앱을 둘로 나눴다.
+
+| flavor | 앱 ID | 접근성 | 용도 |
+|---|---|---|---|
+| `view` (기본으로 내려받음) | `dev.esstional.texttunnel.phoneview` | 선언 없음 | 화면 보기만 |
+| `control` | `dev.esstional.texttunnel.phone` | 있음 | 보기 + 조종 (기존 앱, 업데이트 가능) |
+
+접근성 서비스 클래스·설정·매니페스트의 `<service>` 는 `src/control` 에만 두고, `src/view` 에는 같은 이름의 **빈 클래스**(항상 꺼짐)를 둬서 공용 코드를 고치지 않았다 → [학습 노트 #50](learn/2026-10-29-50-phone-view-only.md).
+
+### 13-5. 배포와 시험
+
+- 서명된 APK 는 `public/download/` 에 두고 서버가 정적으로 준다. 서명 키는 저장소 밖, 백업 필수. 빌드는 `androiduild-release.cmd`.
+- 시험: `phone-connect.test.js`(APK·연결 화면, Edge), `phone-agent.test.js`(에뮬레이터), `remote-phone*.test.js`(서버·화면).
+- 한계: 에뮬레이터에는 Play 프로텍트 차단이 없어서, 실제 갤럭시에서만 설치 차단 여부를 확인할 수 있다.
