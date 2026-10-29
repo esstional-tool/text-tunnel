@@ -318,7 +318,11 @@
   // 폰에서 누르는 버튼: 안드로이드 인텐트 링크 하나로 "앱이 있으면 열고, 없으면 APK 를 내려받는다".
   //   intent://connect?code=…#Intent;scheme=texttunnel;package=…;S.browser_fallback_url=<APK 주소>;end
   // 웹은 앱이 설치돼 있는지 알 수 없지만 크롬이 알아서 앱을 열거나 폴백 주소(APK 다운로드)로 간다. 코드는 짝 맺기용(5분·1회용)이라 미리 만들어 링크에 싣는다.
-  const PHONE_PKG = 'dev.esstional.texttunnel.phone';
+  // 앱은 두 종류 (이슈 #50): 보기 전용(기본 — 접근성 권한이 없어 설치할 때 Play 프로텍트가 막지 않음) / 조종 포함(접근성 서비스 있음)
+  const PHONE_APPS = {
+    view: { pkg: 'dev.esstional.texttunnel.phoneview', apk: '/download/text-tunnel-phone-view.apk' },
+    control: { pkg: 'dev.esstional.texttunnel.phone', apk: '/download/text-tunnel-phone.apk' },
+  };
   const Ph = { es: null, token: null, timer: 0 };
   const IS_ANDROID = /Android/i.test(navigator.userAgent);
   const phoneStatus = (text, state) => { $r('phoneStatus').textContent = text; $r('phoneDot').className = `dot ${state}`; };
@@ -333,7 +337,9 @@
     const j = await r.json();
     const o = location.origin;
     const q = `code=${j.code}&server=${encodeURIComponent(o)}`;
-    $r('phoneConnect').href = `intent://connect?${q}#Intent;scheme=texttunnel;package=${PHONE_PKG};S.browser_fallback_url=${encodeURIComponent(o + '/download/text-tunnel-phone.apk')};end`;
+    const intent = (a) => `intent://connect?${q}#Intent;scheme=texttunnel;package=${a.pkg};S.browser_fallback_url=${encodeURIComponent(o + a.apk)};end`;
+    $r('phoneConnect').href = intent(PHONE_APPS.view);
+    $r('phoneControl').href = intent(PHONE_APPS.control);
     $r('phoneOpen').href = `texttunnel://connect?${q}`;
     $r('phoneConnect').hidden = false;
   }

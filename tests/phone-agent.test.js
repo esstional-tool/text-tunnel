@@ -1,5 +1,5 @@
 // 폰 에이전트(안드로이드 앱) 실제 시험 (이슈 #46) — 가상 폰(에뮬레이터)에 앱을 설치해 서버·보는 쪽과 끝까지 확인한다. Windows + Android SDK 필요.
-//   1) android\gradlew assembleDebug 로 앱을 빌드  2) 에뮬레이터를 띄움 (README 의 "폰 원격 시험")  3) 서버를 띄움
+//   1) android\gradlew assembleControlDebug 로 앱을 빌드  2) 에뮬레이터를 띄움 (README 의 "폰 원격 시험")  3) 서버를 띄움
 //   node tests/phone-agent.test.js http://localhost:8787
 // 에뮬레이터는 호스트 PC 를 10.0.2.2 로 본다. 실제 폰이 연결돼 있으면 그 폰을 쓰지 않도록 에뮬레이터(emulator-*)만 고른다.
 // ⚠ 이 시험은 에뮬레이터의 앱 설정을 바꾸고(PIN·접근성·조종 허용) 화면에 터치를 넣는다 — 에뮬레이터 전용.
@@ -11,7 +11,7 @@ const B = process.argv[2];
 const PORT = new URL(B).port || '80';
 const SDK = process.env.ANDROID_HOME || path.join(os.homedir(), 'AppData', 'Local', 'Android', 'Sdk');
 const ADB = path.join(SDK, 'platform-tools', 'adb.exe');
-const APK = path.join(__dirname, '..', 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
+const APK = path.join(__dirname, '..', 'android', 'app', 'build', 'outputs', 'apk', 'control', 'debug', 'app-control-debug.apk');
 const PKG = 'dev.esstional.texttunnel.phone';
 const PIN = '482915';
 const ok = (c, msg) => console.log(c ? 'PASS' : 'FAIL', msg);

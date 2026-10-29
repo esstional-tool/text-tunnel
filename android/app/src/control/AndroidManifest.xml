@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 조종 포함 버전에만 있는 접근성 서비스. 보기 전용 버전에는 이 선언이 없어 Play 프로텍트의 "민감한 권한" 차단을 받지 않는다 (이슈 #50) -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- 터치·뒤로·홈·글자 입력을 넣는 접근성 서비스 (사용자가 설정에서 직접 켜야 함) -->
+        <service
+            android:name=".TunnelAccessibilityService"
+            android:exported="true"
+            android:label="Text Tunnel 폰 조종"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+    </application>
+</manifest>

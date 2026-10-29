@@ -54,3 +54,9 @@ node tests/phone-agent.test.js http://localhost:8787
 ## 설치·연결 (이슈 #48)
 
 폰의 text-tunnel 메뉴 → **휴대폰 원격 연결하기** 를 누르면 앱이 있으면 열리고(자동 짝 맺기), 없으면 APK 가 내려받아집니다. 직접 링크는 `texttunnel://connect?code=<6자리>&server=<주소>`. 릴리스 APK 는 `build-release.cmd` 로 만들어 `public/download/` 에 둡니다(서명 키는 `~/.android/text-tunnel-release.jks`).
+
+## 두 가지 앱 (이슈 #50)
+
+- **보기 전용** (`view`, 앱 ID `dev.esstional.texttunnel.phoneview`): 접근성 서비스 선언이 없다 → Play 프로텍트가 설치를 막지 않는다. 화면 보기만 된다.
+- **조종 포함** (`control`, 앱 ID `dev.esstional.texttunnel.phone`): 접근성 서비스로 터치·글자 입력. 갤럭시에서 Play 프로텍트가 막으면 Play 스토어 → 프로필 → Play 프로텍트 → 설정에서 앱 검사를 잠깐 끄고 설치.
+- 빌드: `gradlew.bat assembleViewDebug assembleControlDebug` / 배포용은 `build-release.cmd`. 시험용 디버그 APK: `appuildoutputsapkcontroldebugapp-control-debug.apk`.

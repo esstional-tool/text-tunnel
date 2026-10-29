@@ -20,8 +20,8 @@ android {
         applicationId = "dev.esstional.texttunnel.phone"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
     signingConfigs {
         if (signProps.getProperty("storeFile") != null) {
@@ -44,6 +44,21 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures { buildConfig = true }
+
+    // 두 가지 앱 (이슈 #50): control = 조종 포함(접근성 서비스 있음), view = 보기 전용(접근성 선언 없음 → 설치할 때 Play 프로텍트가 막지 않는다)
+    // 서로 다른 앱으로 설치되므로 한 폰에 둘 다 있을 수 있다. control 은 기존 앱 ID 그대로라 이미 설치한 앱이 업데이트된다.
+    flavorDimensions += "mode"
+    productFlavors {
+        create("control") {
+            dimension = "mode"
+            buildConfigField("boolean", "CONTROL", "true")
+        }
+        create("view") {
+            dimension = "mode"
+            applicationId = "dev.esstional.texttunnel.phoneview"
+            buildConfigField("boolean", "CONTROL", "false")
+        }
+    }
 }
 
 kotlin {

@@ -10,8 +10,11 @@ const B = process.argv[2], D = 'http://127.0.0.1:9333';
 const ok = (c, msg) => console.log(c ? 'PASS' : 'FAIL', msg);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const post = (p, body) => fetch(`${B}/api/${p}`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ ...(await r.json().catch(() => ({}))), status: r.status }));
-const APK_FILE = path.join(__dirname, '..', 'public', 'download', 'text-tunnel-phone.apk');
-const PKG = 'dev.esstional.texttunnel.phone';
+const DL = path.join(__dirname, '..', 'public', 'download');
+const APK_FILE = path.join(DL, 'text-tunnel-phone.apk'); // 조종 포함
+const VIEW_FILE = path.join(DL, 'text-tunnel-phone-view.apk'); // 보기 전용(기본)
+const PKG = 'dev.esstional.texttunnel.phoneview';
+const PKG_CONTROL = 'dev.esstional.texttunnel.phone';
 const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 14; SM-S918N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36';
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 async function cdp(wsUrl) {
@@ -38,8 +41,18 @@ async function fakeAgent(key, platform) { // 서버에 입장만 하는 가짜 �
   ok(buf[0] === 0x50 && buf[1] === 0x4b && !!disk && buf.equals(disk), `받은 파일이 저장소의 APK 와 같음 (${Math.round(buf.length / 1024)}KB, ZIP 형식)`);
   ok(buf.includes(Buffer.from('AndroidManifest.xml')) && buf.includes(Buffer.from('classes.dex')), 'APK 안에 AndroidManifest.xml 과 classes.dex 가 있음');
   ok(buf.includes(Buffer.from('APK Sig Block 42')), 'APK 서명 블록이 있음 (서명되어 있어 업데이트 가능)');
+  // 보기 전용 APK (이슈 #50): 기본으로 받는 파일. 접근성 서비스 선언이 없어야 설치할 때 Play 프로텍트가 막지 않는다
+  const rv = await fetch(`${B}/download/text-tunnel-phone-view.apk`);
+  const vbuf = Buffer.from(await rv.arrayBuffer());
+  ok(rv.status === 200 && /attachment; filename="text-tunnel-phone-view.apk"/.test(rv.headers.get('content-disposition') || '') && fs.existsSync(VIEW_FILE) && vbuf.equals(fs.readFileSync(VIEW_FILE)), '보기 전용 APK 도 내려받을 수 있고(파일 이름이 다름) 저장소의 것과 같음');
+  ok(vbuf[0] === 0x50 && vbuf[1] === 0x4b && vbuf.includes(Buffer.from('APK Sig Block 42')), '보기 전용 APK 는 서명되어 있음');
   const SDK = process.env.ANDROID_HOME || path.join(os.homedir(), 'AppData', 'Local', 'Android', 'Sdk');
   const bt = path.join(SDK, 'build-tools');
+  const aapt = fs.existsSync(bt) ? fs.readdirSync(bt).sort().reverse().map((v) => path.join(bt, v, 'aapt2.exe')).find((p) => fs.existsSync(p)) : null;
+  if (aapt) { // 매니페스트에 접근성 서비스 선언이 있는지: 보기 전용에는 없고 조종 포함에는 있다
+    const man = (f) => execFileSync(aapt, ['dump', 'xmltree', '--file', 'AndroidManifest.xml', f], { encoding: 'utf8' });
+    ok(!/BIND_ACCESSIBILITY_SERVICE/.test(man(VIEW_FILE)) && /BIND_ACCESSIBILITY_SERVICE/.test(man(APK_FILE)), '보기 전용 APK 에는 접근성 서비스 선언이 없고, 조종 포함 APK 에는 있음');
+  } else console.log('SKIP aapt2 가 없어 매니페스트 확인은 건너뜀');
   const signer = fs.existsSync(bt) ? fs.readdirSync(bt).sort().reverse().map((v) => path.join(bt, v, 'apksigner.bat')).find((p) => fs.existsSync(p)) : null;
   if (signer) {
     let out = '';
@@ -74,11 +87,15 @@ async function fakeAgent(key, platform) { // 서버에 입장만 하는 가짜 �
     const href = await q(`document.getElementById('phoneConnect').getAttribute('href')`);
     const m = /^intent:\/\/connect\?code=([A-Z0-9]{6})&server=([^#]+)#Intent;scheme=texttunnel;package=([^;]+);S\.browser_fallback_url=([^;]+);end$/.exec(href || '');
     ok(!!m && m[3] === PKG, `버튼은 안드로이드 인텐트 링크: ${href && href.slice(0, 70)}…`);
-    ok(!!m && decodeURIComponent(m[2]) === B && decodeURIComponent(m[4]) === `${B}/download/text-tunnel-phone.apk`, '링크에 이 서버 주소가 실리고, 앱이 없으면 가는 폴백 주소가 APK 다운로드 주소');
+    ok(!!m && decodeURIComponent(m[2]) === B && decodeURIComponent(m[4]) === `${B}/download/text-tunnel-phone-view.apk`, '링크에 이 서버 주소가 실리고, 앱이 없으면 가는 폴백 주소가 보기 전용 APK 다운로드 주소');
+    const hc = await q(`document.getElementById('phoneControl').getAttribute('href')`);
+    const mc = /^intent:\/\/connect\?code=[A-Z0-9]{6}&server=[^#]+#Intent;scheme=texttunnel;package=([^;]+);S\.browser_fallback_url=([^;]+);end$/.exec(hc || '');
+    ok(!!mc && mc[1] === PKG_CONTROL && decodeURIComponent(mc[2]) === `${B}/download/text-tunnel-phone.apk`, '"조종 포함 앱" 링크는 조종 포함 앱을 열고 없으면 조종 포함 APK 를 받음');
+    ok((await q(`document.getElementById('phoneScreen').textContent`)).includes('그래도 다운로드') && (await q(`document.getElementById('phoneScreen').textContent`)).includes('Play 프로텍트'), '화면에 "그래도 다운로드"와 Play 프로텍트 안내가 있음');
     ok(await q(`!document.getElementById('phoneConnect').hidden`), '안드로이드에서는 연결 버튼이 보임');
     const claimed = await post('pair/claim', { code: m?.[1] });
     ok(claimed.key === key, '링크의 코드가 이 폰의 짝 열쇠로 연결되는 유효한 1회용 코드');
-    ok((await q(`document.getElementById('phoneOpen').getAttribute('href')`)).startsWith('texttunnel://connect?code=') && (await q(`document.getElementById('phoneDownload').getAttribute('href')`)) === '/download/text-tunnel-phone.apk', '"앱 열기"(직접 링크)와 "앱만 받기" 보조 링크도 있음');
+    ok((await q(`document.getElementById('phoneOpen').getAttribute('href')`)).startsWith('texttunnel://connect?code=') && (await q(`document.getElementById('phoneDownload').getAttribute('href')`)) === '/download/text-tunnel-phone-view.apk', '"앱 열기"(직접 링크)와 "앱만 받기" 보조 링크도 있음');
     ok(await waitText('phoneStatus', /아직 폰이 연결되지 않았어요/), `폰이 아직 연결 안 됐을 때 상태: "${await text('phoneStatus')}"`);
     ag = await fakeAgent(key, 'android');
     ok(await waitText('phoneStatus', /폰이 연결됐어요.*원격 화면 보기/), `폰 앱이 연결되면 실시간으로 "폰이 연결됐어요": "${await text('phoneStatus')}"`);

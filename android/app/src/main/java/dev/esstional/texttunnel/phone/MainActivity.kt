@@ -58,7 +58,7 @@ class MainActivity : Activity() {
         prefs = Prefs(this)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(32)) }
 
-        col.addView(label("Text Tunnel 폰", 24f, true, 0))
+        col.addView(label(getString(R.string.app_name), 24f, true, 0))
         col.addView(label("PC 에서 이 폰 화면을 보고 조종할 수 있게 하는 앱이에요.", 14f))
         statusView = label("", 15f, true, 14)
         col.addView(statusView)
@@ -94,11 +94,17 @@ class MainActivity : Activity() {
         shareSwitch.setOnCheckedChangeListener { _, on -> if (!settingSwitches) onShareToggle(on) }
         col.addView(shareSwitch)
 
-        col.addView(label("5. 조종 허용 (선택)", 16f, true, 20))
-        controlInfo = label("", 13f, false, 2); col.addView(controlInfo)
+        // 조종 항목은 조종 포함 버전에만 보인다 (보기 전용 버전은 접근성 서비스가 없어 화면 보기만 된다, 이슈 #50)
+        controlInfo = label("", 13f, false, 2)
         controlSwitch = Switch(this).apply { text = "PC 에서 터치·글자 입력 허용"; setPadding(0, dp(8), 0, dp(8)) }
         controlSwitch.setOnCheckedChangeListener { _, on -> if (!settingSwitches) onControlToggle(on) }
-        col.addView(controlSwitch)
+        if (BuildConfig.CONTROL) {
+            col.addView(label("5. 조종 허용 (선택)", 16f, true, 20))
+            col.addView(controlInfo)
+            col.addView(controlSwitch)
+        } else {
+            col.addView(label("보기 전용 버전이에요 — 컴퓨터에서 이 폰 화면을 볼 수만 있어요 (터치·글자 입력은 안 돼요)", 13f, false, 20))
+        }
         col.addView(button("접근성 설정 열기") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
 
         col.addView(label("PC(또는 다른 폰)의 메신저 앱 메뉴 → 원격 화면 보기 → PIN 입력으로 이 폰 화면을 볼 수 있어요. 은행 앱 등 보안 화면은 안드로이드가 검게 처리해요.", 12f, false, 20))
