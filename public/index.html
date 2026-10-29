@@ -122,11 +122,33 @@
       </form>
       <div id="remoteEmpty" class="remote-empty">
         <p class="empty-title">원격 PC 가 아직 안 보여요</p>
-        <p class="empty-sub">보고 싶은 PC 에서 앱 메뉴 → <b>이 PC 원격 허용 켜기</b> 를 따라 에이전트(<code>remote-agent.exe</code>)를 켜 두세요.</p>
+        <p class="empty-sub">보고 싶은 PC 에서 앱 메뉴 → <b>이 PC 원격 허용 켜기</b> 를 따라 에이전트(<code>remote-agent.exe</code>)를 켜 두세요.<br>폰 화면을 보려면 폰의 Text Tunnel 메뉴 → <b>휴대폰 원격 연결하기</b>.</p>
       </div>
     </div>
     <p id="remoteStats" class="remote-stats tabular"></p>
     <p id="remoteInfo" class="remote-info tabular"></p>
+  </section>
+
+  <!-- 휴대폰 원격 연결하기 (이슈 #48, public/remote.js): 폰에서 누르면 앱이 있으면 열고 없으면 APK 를 내려받는다 -->
+  <section id="phoneScreen" class="host" hidden>
+    <header>
+      <button id="phoneBack" class="icon-btn" aria-label="메신저로 돌아가기"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="title">
+        <strong>휴대폰 원격 연결하기</strong>
+        <span class="status"><span id="phoneDot" class="dot"></span><span id="phoneStatus">확인하는 중…</span></span>
+      </div>
+    </header>
+    <div class="host-body">
+      <p class="host-lead">이 폰의 화면을 <b>연결된 컴퓨터에서 보고 조종</b>할 수 있게 해요. 아래 버튼 하나면 돼요.</p>
+      <a id="phoneConnect" class="primary host-btn" href="#" hidden>휴대폰 원격 연결하기</a>
+      <p id="phoneNote" class="host-note"></p>
+      <ol class="host-steps">
+        <li><b>버튼을 누르세요</b><p>앱이 이미 있으면 <b>바로 열려요</b>. 없으면 <b>자동으로 내려받아져요</b> — 받은 파일을 눌러 설치한 뒤 이 버튼을 한 번 더 누르세요.</p></li>
+        <li><b>앱에서</b><p>짝 맺기는 자동이에요. <b>접속 PIN 을 정하고</b>(처음 한 번), 안드로이드 허용 창에서 <b>지금 시작</b>을 누르세요.</p></li>
+        <li><b>컴퓨터에서</b><p>Text Tunnel 메뉴 → <b>원격 화면 보기</b> → 폰에서 정한 PIN 입력. 조종하려면 <b>조종 켜기</b> (폰의 접근성 서비스를 켜야 해요).</p></li>
+      </ol>
+      <p class="host-note">앱이 열리지 않으면: <a id="phoneOpen" href="#">앱 열기</a> · <a id="phoneDownload" href="/download/text-tunnel-phone.apk">앱만 받기</a></p>
+    </div>
   </section>
 
   <!-- 원격조종: 이 PC 를 원격으로 볼 수 있게 켜기 안내 (이슈 #30, public/remote.js) -->
@@ -292,6 +314,7 @@
       <button id="mQr" class="row-btn">새 기기 연결 (QR·코드 보기)</button>
       <button id="mInstall" class="row-btn" hidden>앱으로 설치</button>
       <button id="mClear" class="row-btn danger-text">대화 지우기</button>
+      <button id="mPhone" class="row-btn">휴대폰 원격 연결하기</button>
       <button id="mHost" class="row-btn">이 PC 원격 허용 켜기 (에이전트)</button>
       <button id="mRemote" class="row-btn">원격 화면 보기 (다른 PC)</button>
       <button id="mExt" class="row-btn">방문 기록 지우기 (크롬 확장)</button>

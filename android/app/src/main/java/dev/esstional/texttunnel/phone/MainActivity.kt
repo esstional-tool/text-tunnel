@@ -63,6 +63,15 @@ class MainActivity : Activity() {
         statusView = label("", 15f, true, 14)
         col.addView(statusView)
 
+        if (BuildConfig.DEBUG) { // 시험용: 탭·글자가 실제로 들어왔는지 확인하는 칸 (디버그 빌드에만 보임, 화면 맨 위에 둬서 스크롤 없이 보이게)
+            col.addView(Button(this).apply {
+                text = "탭 시험 (0)"; contentDescription = "tap-test"
+                setOnClickListener { testCount++; text = "탭 시험 ($testCount)"; Log.i("TT_TEST", "tap count=$testCount") }
+                setOnLongClickListener { Log.i("TT_TEST", "long press"); true }
+            })
+            col.addView(EditText(this).apply { hint = "글자 입력 시험"; contentDescription = "text-test"; setSingleLine() })
+        }
+
         col.addView(label("1. 서버", 16f, true, 20))
         serverEdit = EditText(this).apply { setText(prefs.server); inputType = InputType.TYPE_TEXT_VARIATION_URI; setSingleLine() }
         col.addView(serverEdit)
@@ -94,21 +103,53 @@ class MainActivity : Activity() {
 
         col.addView(label("PC(또는 다른 폰)의 메신저 앱 메뉴 → 원격 화면 보기 → PIN 입력으로 이 폰 화면을 볼 수 있어요. 은행 앱 등 보안 화면은 안드로이드가 검게 처리해요.", 12f, false, 20))
 
-        if (BuildConfig.DEBUG) { // 시험용: 탭이 실제로 들어왔는지 확인하는 단추 (디버그 빌드에만 보임)
-            col.addView(label("[디버그] 시험용 단추", 12f, true, 24))
-            col.addView(Button(this).apply {
-                text = "탭 시험 (0)"; contentDescription = "tap-test"
-                setOnClickListener { testCount++; text = "탭 시험 ($testCount)"; Log.i("TT_TEST", "tap count=$testCount") }
-                setOnLongClickListener { Log.i("TT_TEST", "long press"); true }
-            })
-            col.addView(EditText(this).apply { hint = "글자 입력 시험"; contentDescription = "text-test"; setSingleLine() })
-        }
         setContentView(ScrollView(this).apply { addView(col) })
         handleDebugExtras(intent)
+        handleLink(intent)
         tick()
     }
 
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); handleDebugExtras(intent) }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); handleDebugExtras(intent); handleLink(intent) }
+
+    // ── 웹의 "휴대폰 원격 연결하기" 링크 (이슈 #48) ──
+    // texttunnel://connect?code=6자리&server=서버주소 → 자동으로 짝 맺기 → (PIN 이 없으면 정하기) → 화면 공유 허용 요청 → 원격 지원 켜짐
+    private fun handleLink(i: Intent?) {
+        val data = i?.data ?: return
+        if (data.scheme != "texttunnel" || data.host != "connect") return
+        i.data = null // 한 번만 처리 (화면 회전·다시 열기에서 같은 링크를 또 처리하지 않게)
+        if (AgentService.running) { toast("이미 원격 연결 중이에요"); return }
+        val code = (data.getQueryParameter("code") ?: "").trim().uppercase()
+        val server = data.getQueryParameter("server")?.trim()?.trimEnd('/')
+        if (!Regex("^[A-Z0-9]{6}$").matches(code)) { toast("연결 링크가 올바르지 않아요"); return }
+        if (server != null && !(server.startsWith("https://") || (BuildConfig.DEBUG && server.startsWith("http://")))) { toast("연결 링크의 서버 주소가 올바르지 않아요"); return }
+        val go = { if (server != null) { prefs.server = server; serverEdit.setText(prefs.server) }; autoConnect(code) }
+        // 저장돼 있던 서버·기본 서버가 아니면 한 번 물어본다 (아무 웹페이지가 이 링크로 폰 화면을 엉뚱한 서버에 보내지 못하게)
+        if (server != null && server != prefs.server && server != Prefs.DEFAULT_SERVER) {
+            AlertDialog.Builder(this).setTitle("이 서버로 연결할까요?")
+                .setMessage("$server\n\n내가 쓰는 서버가 아니면 '취소'를 누르세요.")
+                .setPositiveButton("연결") { _, _ -> go() }.setNegativeButton("취소", null).show()
+        } else go()
+    }
+
+    /** 코드로 짝을 맺고 → PIN → 화면 공유까지 이어서 진행한다 */
+    private fun autoConnect(code: String) {
+        Thread {
+            val msg = try {
+                val r = Http(prefs.server).postJson("/api/pair/claim", JSONObject().put("code", code))
+                val key = r.json()?.optString("key", "") ?: ""
+                if (r.ok && key.isNotEmpty()) { prefs.key = key; AgentService.log(this, "짝을 맺었어요 (연결 링크)"); null }
+                else "연결 코드가 만료됐거나 맞지 않아요. 메신저에서 \"휴대폰 원격 연결하기\"를 다시 눌러 주세요"
+            } catch (e: Exception) { "서버에 연결하지 못했어요" }
+            ui.post { if (msg != null) toast(msg) else continueSetup() }
+        }.start()
+    }
+
+    private fun continueSetup() {
+        refresh()
+        if (!prefs.paired) return
+        if (!prefs.hasPin) { toast("먼저 접속 PIN 을 정해 주세요"); askPin { continueSetup() }; return }
+        if (!AgentService.running) onShareToggle(true)
+    }
     override fun onResume() { super.onResume(); refresh() }
 
     private fun tick() { refresh(); ui.postDelayed({ tick() }, 1000) }
@@ -145,7 +186,7 @@ class MainActivity : Activity() {
     }
 
     // ── PIN ──
-    private fun askPin() {
+    private fun askPin(onSaved: (() -> Unit)? = null) {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
         fun field(hint: String) = EditText(this).apply { this.hint = hint; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; filters = arrayOf(android.text.InputFilter.LengthFilter(12)) }
         val a = field("PIN (6~12자리 숫자)"); val b = field("한 번 더")
@@ -156,7 +197,7 @@ class MainActivity : Activity() {
                 when {
                     !PinStore.valid(p) -> toast("PIN 은 6~12자리 숫자예요")
                     p != b.text.toString() -> toast("두 번 입력한 PIN 이 달라요")
-                    else -> { PinStore.set(prefs, p); AgentService.log(this, "PIN 을 새로 정했어요"); toast("PIN 을 저장했어요"); refresh() }
+                    else -> { PinStore.set(prefs, p); AgentService.log(this, "PIN 을 새로 정했어요"); toast("PIN 을 저장했어요"); refresh(); onSaved?.invoke() }
                 }
             }.setNegativeButton("취소", null).show()
     }
@@ -189,6 +230,7 @@ class MainActivity : Activity() {
         if (resultCode == RESULT_OK && data != null) {
             startForegroundService(Intent(this, AgentService::class.java).setAction(AgentService.ACTION_START)
                 .putExtra(AgentService.EXTRA_CODE, resultCode).putExtra(AgentService.EXTRA_DATA, data))
+            toast("원격 연결이 켜졌어요 — 컴퓨터의 \"원격 화면 보기\"에서 이 폰을 볼 수 있어요")
         } else toast("화면 공유를 허용하지 않았어요")
         ui.postDelayed({ refresh() }, 500)
     }

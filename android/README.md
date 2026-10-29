@@ -50,3 +50,7 @@ node server.js
 node tests/phone-agent.test.js http://localhost:8787
 ```
 이 시험은 **에뮬레이터 전용**입니다 (앱 설정·접근성·터치를 바꿈). 실제 폰이 연결돼 있어도 에뮬레이터만 고릅니다.
+
+## 설치·연결 (이슈 #48)
+
+폰의 text-tunnel 메뉴 → **휴대폰 원격 연결하기** 를 누르면 앱이 있으면 열리고(자동 짝 맺기), 없으면 APK 가 내려받아집니다. 직접 링크는 `texttunnel://connect?code=<6자리>&server=<주소>`. 릴리스 APK 는 `build-release.cmd` 로 만들어 `public/download/` 에 둡니다(서명 키는 `~/.android/text-tunnel-release.jks`).

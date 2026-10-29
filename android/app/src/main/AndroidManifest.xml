@@ -22,6 +22,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- 웹의 "휴대폰 원격 연결하기" 버튼이 여는 링크: texttunnel://connect?code=6자리&server=서버주소 (이슈 #48) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="texttunnel" android:host="connect" />
+            </intent-filter>
         </activity>
 
         <!-- 화면 캡처 + 서버 연결 (보는 사람이 있을 때만 캡처) -->

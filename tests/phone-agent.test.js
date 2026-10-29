@@ -16,7 +16,13 @@ const PKG = 'dev.esstional.texttunnel.phone';
 const PIN = '482915';
 const ok = (c, msg) => console.log(c ? 'PASS' : 'FAIL', msg);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const post = (p, body) => fetch(`${B}/api/${p}`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ ...(await r.json().catch(() => ({}))), status: r.status }));
+// adb 조작(uiautomator 등)이 몇 초 걸리는 사이 서버가 유휴 연결을 닫을 수 있어, 연결 오류는 한 번 다시 시도한다
+const post = async (p, body) => {
+  for (let i = 0; ; i++) {
+    try { const r = await fetch(`${B}/api/${p}`, { method: 'POST', body: JSON.stringify(body) }); return { ...(await r.json().catch(() => ({}))), status: r.status }; }
+    catch (e) { if (i >= 2) throw e; await sleep(300); }
+  }
+};
 
 let SERIAL = null;
 const adb = (...args) => execFileSync(ADB, SERIAL ? ['-s', SERIAL, ...args] : args, { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
@@ -61,6 +67,9 @@ const logcat = (tag) => adb('logcat', '-d', '-s', `${tag}:I`);
   try {
     // ── 설치·설정 ──
     adb('install', '-r', '-g', APK); // -g: 알림 등 권한을 미리 허용
+    // 화면이 꺼지면 터치도 화면 캡처도 안 되므로 시험 동안 켜 둔다 (화면 꺼짐 시간을 사실상 없애고, 깨우고, 잠금을 푼다)
+    sh('settings put system screen_off_timeout 2147483647'); sh('settings put global stay_on_while_plugged_in 7'); sh('svc power stayon true');
+    sh('input keyevent 224'); sh('wm dismiss-keyguard'); sh('input keyevent 82'); await sleep(800);
     sh(`am force-stop ${PKG}`);
     sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`);
     sh(`appops set ${PKG} PROJECT_MEDIA allow`);
@@ -73,18 +82,28 @@ const logcat = (tag) => adb('logcat', '-d', '-s', `${tag}:I`);
 
     // ── 짝 맺기 + PIN + (조종은 아직 허용 안 함) ──
     const { key, code } = await post('pair/start', {});
-    sh(`am start -n ${PKG}/.MainActivity --es server http://10.0.2.2:${PORT} --es pin ${PIN} --es code ${code} --ez control false`);
-    await sleep(3500);
-    const joined = await post('pair/start', { key }); // 열쇠 확인용(방이 유효)
-    ok(!!joined.code, '앱이 짝 코드로 같은 짝 열쇠를 받음 (코드 사용 후에도 같은 열쇠의 방이 유효)');
+    sh(`am start -n ${PKG}/.MainActivity --es server http://10.0.2.2:${PORT} --es pin ${PIN} --ez control false`); // PIN 만 미리 정해 둠 (사람이 앱에서 정하는 단계 대신)
+    await sleep(1500);
 
-    // ── 화면 공유 시작 ──
-    sh(`am start -n ${PKG}/.MainActivity --ez share true`);
+    // ── 웹의 "휴대폰 원격 연결하기" 버튼이 여는 딥링크 (이슈 #48) ──
+    // 1) 모르는 서버가 실린 링크는 곧바로 연결하지 않고 확인 창을 띄운다 (악성 링크가 폰 화면을 엉뚱한 서버로 보내지 못하게)
+    const evil = await post('pair/start', {});
+    sh(`am start -a android.intent.action.VIEW -d 'texttunnel://connect?code=${evil.code}&server=https://evil.example' -n ${PKG}/.MainActivity`);
+    await sleep(1800);
+    ok(!!findNode('text', '이 서버로 연결할까요'), '모르는 서버 주소가 실린 링크는 "이 서버로 연결할까요?" 확인 창을 띄움');
+    sh('input keyevent 4'); await sleep(800); // 취소
+    ok(!(await post('pair/claim', { code: evil.code })).error, '취소하면 그 코드는 쓰이지 않음 (앱이 evil 서버로 연결하지 않음)');
+    // 2) 내 서버의 링크: 자동으로 짝 맺기 → (PIN 은 이미 있음) → 화면 공유 허용 요청 → 원격 지원 켜짐
+    sh(`am start -a android.intent.action.VIEW -d 'texttunnel://connect?code=${code}&server=http://10.0.2.2:${PORT}' -n ${PKG}/.MainActivity`);
     let agentOnline = false;
     const vj = await post('remote/view/join', { key });
     viewer = vj; lv = listen('view/events', vj.token);
     for (let i = 0; i < 60 && !agentOnline; i++) { await sleep(500); agentOnline = lv.last('agent')?.online === true; if (!agentOnline && i === 10) { const n = findNode('text', '지금 시작|시작|Start now'); if (n) sh(`input tap ${Math.round(n.x)} ${Math.round(n.y)}`); } }
-    ok(agentOnline && lv.last('agent')?.platform === 'android', `폰 에이전트가 서버에 입장하고 platform 이 android: ${JSON.stringify(lv.last('agent'))}`);
+    ok(agentOnline && lv.last('agent')?.platform === 'android', `딥링크 한 번으로 자동 짝 맺기 → 화면 공유까지 켜져 폰 에이전트가 입장 (platform android): ${JSON.stringify(lv.last('agent'))}`);
+    const dup = await post('pair/start', { key });
+    sh(`am start -a android.intent.action.VIEW -d 'texttunnel://connect?code=${dup.code}&server=http://10.0.2.2:${PORT}' -n ${PKG}/.MainActivity`);
+    await sleep(1800);
+    ok((await post('pair/claim', { code: dup.code })).key === key, '이미 원격 연결 중일 때 다시 누른 링크는 무시됨 (코드가 그대로 남음 — 중복 연결 없음)');
 
     // ── PIN 전에는 아무것도 안 온다 ──
     await sleep(1500);
@@ -114,7 +133,15 @@ const logcat = (tag) => adb('logcat', '-d', '-s', `${tag}:I`);
     ok(lv.last('control')?.allowed === true, '조종을 허용하면(접근성 서비스가 켜져 있을 때) 보는 쪽에 "조종 가능" 알림');
     ok((await post(`remote/view/control?token=${vj.token}`, { on: true })).on === true, '조종 켜기 성공');
     await sleep(600);
-    const input = (ev) => post(`remote/view/input?token=${vj.token}`, { ev });
+    const inputRaw = (ev) => post(`remote/view/input?token=${vj.token}`, { ev });
+    // adb 의 uiautomator 는 실행되는 동안 안드로이드가 다른 접근성 서비스를 잠시 끊는다 → 폰 앱이 "조종 불가"를 알려 서버가 조종을 꺼 버린다 (시험 도구 때문이지 앱 문제가 아님).
+    // 그래서 입력을 보내기 전에 접근성 서비스가 다시 붙어 조종이 가능해질 때까지 기다렸다가 조종을 다시 켠다.
+    const input = async (ev) => {
+      await sleep(1200); // 접근성 서비스가 끊겼다 다시 붙고 그 상태가 서버를 거쳐 오는 시간
+      for (let i = 0; i < 40 && lv.last('control')?.allowed !== true; i++) await sleep(250);
+      if (lv.last('control')?.on !== true) { await post(`remote/view/control?token=${vj.token}`, { on: true }); await sleep(400); }
+      return inputRaw(ev);
+    };
     const ratio = (n) => ({ x: n.x / (SW - 1), y: n.y / (SH - 1) });
 
     // ── 탭 ──
@@ -138,7 +165,9 @@ const logcat = (tag) => adb('logcat', '-d', '-s', `${tag}:I`);
     const field = findNode('content-desc', 'text-test');
     const fr = ratio(field);
     await input([{ t: 'm', ...fr }, { t: 'd', ...fr, b: 0 }, { t: 'u', ...fr, b: 0 }]); await sleep(1200);
-    await input([{ t: 's', s: '안녕 hello 123' }]); await sleep(1200);
+    sh('logcat -c');
+    const rs = await input([{ t: 's', s: '안녕 hello 123' }]); await sleep(1200);
+    if (nodeText('text-test') !== '안녕 hello 123') console.log('  [진단] 글자 입력이 안 들어감 — 서버 응답', JSON.stringify(rs), '조종 상태', JSON.stringify(lv.last('control')), '폰 access.log 끝:', JSON.stringify(sh(`run-as ${PKG} cat files/access.log`).trim().split('\n').slice(-6)), '접근성', sh('settings get secure enabled_accessibility_services').trim(), '시스템 로그:', JSON.stringify(adb('logcat', '-d', '-v', 'time', '*:I').split('\n').filter((l) => /texttunnel|Accessibility|accessibility/i.test(l)).slice(-14)), '앱 로그:', logcat('TT_GESTURE').split('\n').slice(-6).join(' | '), '| 입력칸 UI:', JSON.stringify(adb('exec-out', 'uiautomator', 'dump', '/dev/tty').match(/<node[^>]*content-desc="text-test"[^>]*>/)?.[0]?.slice(0, 260)));
     ok(nodeText('text-test') === '안녕 hello 123', `"글자 보내기"가 한글 포함 그대로 입력칸에 들어감: "${nodeText('text-test')}"`);
     await input([{ t: 'k', vk: 65, d: 1, e: 0, ch: 'A' }, { t: 'k', vk: 8, d: 1, e: 0 }, { t: 'k', vk: 8, d: 1, e: 0 }, { t: 'k', vk: 66, d: 1, e: 0, ch: '!' }]); await sleep(1200);
     ok(nodeText('text-test') === '안녕 hello 12!', `키보드 글자는 커서 위치에 들어가고 Backspace 로 지워짐: "${nodeText('text-test')}"`);
@@ -157,8 +186,10 @@ const logcat = (tag) => adb('logcat', '-d', '-s', `${tag}:I`);
     const focus = sh('dumpsys window | grep mCurrentFocus');
     ok(!focus.includes(PKG), `홈 동작: 앱 밖(홈 화면)으로 나감 (${focus.trim().slice(0, 90)})`);
     sh(`am start -n ${PKG}/.MainActivity`); await sleep(1000);
-    await input([{ t: 'd', x: 0.5, y: 0.5, b: 2 }, { t: 'u', x: 0.5, y: 0.5, b: 2 }]); await sleep(1200);
-    ok(!sh('dumpsys window | grep mCurrentFocus').includes(`${PKG}/${PKG}.MainActivity`), '마우스 오른쪽 버튼은 뒤로 가기');
+    sh('logcat -c');
+    await input([{ t: 'd', x: 0.5, y: 0.5, b: 2 }, { t: 'u', x: 0.5, y: 0.5, b: 2 }]); await sleep(1500);
+    // 화면에 대화상자가 떠 있으면 뒤로 가기는 그것만 닫으므로, 앱이 뒤로 가기 동작을 실제로 실행했는지를 확인한다
+    ok(logcat('TT_GESTURE').includes('back(right button) ok=true'), '마우스 오른쪽 버튼은 뒤로 가기 동작을 실행함');
 
     // ── 조종 끄기: 입력이 더는 들어가지 않는다 ──
     sh(`am start -n ${PKG}/.MainActivity`); await sleep(1200);
@@ -166,7 +197,7 @@ const logcat = (tag) => adb('logcat', '-d', '-s', `${tag}:I`);
     sh(`am start -n ${PKG}/.MainActivity --ez control false`);
     for (let i = 0; i < 30 && lv.last('control')?.allowed !== false; i++) await sleep(400);
     ok(lv.last('control')?.allowed === false && lv.last('control')?.on === false, '폰에서 조종 허용을 끄면 보는 쪽 조종도 즉시 꺼짐');
-    ok((await input([{ t: 'm', ...r }, { t: 'd', ...r, b: 0 }, { t: 'u', ...r, b: 0 }])).status === 409, '끈 뒤의 입력은 거절됨 (409)');
+    ok((await inputRaw([{ t: 'm', ...r }, { t: 'd', ...r, b: 0 }, { t: 'u', ...r, b: 0 }])).status === 409, '끈 뒤의 입력은 거절됨 (409)');
     await sleep(800);
     ok(!/tap count/.test(logcat('TT_TEST')), '폰에는 아무 입력도 들어가지 않음');
 
@@ -178,9 +209,24 @@ const logcat = (tag) => adb('logcat', '-d', '-s', `${tag}:I`);
     ok(!log.includes(PIN) && !log.includes(key) && !/안녕|hello/.test(log), 'access.log 에 PIN·열쇠·입력한 글자는 없음');
 
     // ── 중지 ──
-    sh(`am startservice -n ${PKG}/.AgentService -a dev.esstional.texttunnel.phone.STOP`);
+    // 알림창을 열어 "중지" 단추를 실제로 누른다
+    sh('input keyevent 224'); sh('input keyevent 3'); sh('cmd statusbar collapse'); await sleep(1000); // 앱 화면이 앞에 있으면 uiautomator 가 알림창 대신 앱을 읽는다 → 홈 화면 위에서 연다
+    let stopBtn = null;
+    for (let i = 0; i < 3 && !stopBtn; i++) {
+      sh('cmd statusbar expand-notifications'); await sleep(2500);
+      stopBtn = findNode('text', '중지');
+      if (!stopBtn) { // 알림이 묶여 접혀 있으면 단추가 안 보인다 → 이 앱 알림 묶음을 펼치고, 상시 알림('원격 허용 중')도 펼친다 (에뮬레이터 1080x2400 기준 비율)
+        sh(`input tap ${Math.round(SW * 0.877)} ${Math.round(SH * 0.267)}`); await sleep(1200);
+        sh(`input tap ${Math.round(SW * 0.893)} ${Math.round(SH * 0.4375)}`); await sleep(1500);
+        stopBtn = findNode('text', '중지');
+      }
+      if (!stopBtn) { sh('cmd statusbar collapse'); await sleep(800); }
+    }
+    ok(!!stopBtn, `알림창에 "중지" 단추가 보임 (${stopBtn && Math.round(stopBtn.x) + ',' + Math.round(stopBtn.y)})`);
+    if (stopBtn) sh(`input tap ${Math.round(stopBtn.x)} ${Math.round(stopBtn.y)}`);
     for (let i = 0; i < 30 && lv.last('agent')?.online !== false; i++) await sleep(400);
-    ok(lv.last('agent')?.online === false, '알림의 "중지"(서비스 중지)를 누르면 에이전트가 오프라인이 되고 화면 공유가 끝남');
+    ok(lv.last('agent')?.online === false, '알림의 "중지"를 누르면 에이전트가 오프라인이 되고 화면 공유가 끝남');
+    sh('cmd statusbar collapse');
   } catch (e) { console.log('ERROR', e.message); }
   try { lv?.close(); if (viewer) await fetch(`${B}/api/remote/leave?token=${viewer.token}`, { method: 'POST' }); } catch {}
   try { sh(`am force-stop ${PKG}`); sh('settings put secure enabled_accessibility_services ""'); } catch {}
