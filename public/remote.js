@@ -314,6 +314,59 @@
     try { await navigator.clipboard.writeText(text); $r('hostCopy').textContent = '복사됨'; setTimeout(() => ($r('hostCopy').textContent = '복사'), 1500); }
     catch { const sel = getSelection(), rg = document.createRange(); rg.selectNodeContents($r('hostCmd')); sel.removeAllRanges(); sel.addRange(rg); $r('hostCopy').textContent = '선택됨 — Ctrl+C'; }
   }
+  // ── 휴대폰 원격 연결하기 (이슈 #48) ───────────────────────────────
+  // 폰에서 누르는 버튼: 안드로이드 인텐트 링크 하나로 "앱이 있으면 열고, 없으면 APK 를 내려받는다".
+  //   intent://connect?code=…#Intent;scheme=texttunnel;package=…;S.browser_fallback_url=<APK 주소>;end
+  // 웹은 앱이 설치돼 있는지 알 수 없지만 크롬이 알아서 앱을 열거나 폴백 주소(APK 다운로드)로 간다. 코드는 짝 맺기용(5분·1회용)이라 미리 만들어 링크에 싣는다.
+  const PHONE_PKG = 'dev.esstional.texttunnel.phone';
+  const Ph = { es: null, token: null, timer: 0 };
+  const IS_ANDROID = /Android/i.test(navigator.userAgent);
+  const phoneStatus = (text, state) => { $r('phoneStatus').textContent = text; $r('phoneDot').className = `dot ${state}`; };
+  function phoneClose() {
+    Ph.es?.close(); Ph.es = null;
+    if (Ph.token) { navigator.sendBeacon?.(`/api/remote/leave?token=${encodeURIComponent(Ph.token)}`, ''); Ph.token = null; }
+    clearInterval(Ph.timer); Ph.timer = 0;
+  }
+  async function makePhoneLink() {
+    const r = await fetch('/api/pair/start', { method: 'POST', body: JSON.stringify({ key }) }).catch(() => null);
+    if (!r?.ok) { $r('phoneNote').textContent = '연결 코드를 만들지 못했어요. 잠시 뒤 다시 열어 주세요'; return; }
+    const j = await r.json();
+    const o = location.origin;
+    const q = `code=${j.code}&server=${encodeURIComponent(o)}`;
+    $r('phoneConnect').href = `intent://connect?${q}#Intent;scheme=texttunnel;package=${PHONE_PKG};S.browser_fallback_url=${encodeURIComponent(o + '/download/text-tunnel-phone.apk')};end`;
+    $r('phoneOpen').href = `texttunnel://connect?${q}`;
+    $r('phoneConnect').hidden = false;
+  }
+  async function openPhone() {
+    closeSheets(); show('phoneScreen');
+    phoneClose();
+    $r('phoneConnect').hidden = true;
+    if (!key) { phoneStatus('먼저 메신저로 연결해야 해요', 'off'); $r('phoneNote').textContent = ''; return; }
+    if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) $r('phoneNote').textContent = '아이폰은 지원하지 않아요 (안드로이드 폰만 가능해요)';
+    else if (!IS_ANDROID) $r('phoneNote').textContent = '이 버튼은 연결할 안드로이드 폰의 Text Tunnel 에서 눌러 주세요. 폰이 연결되면 여기에 표시돼요.';
+    else $r('phoneNote').textContent = '';
+    if (IS_ANDROID) { makePhoneLink(); Ph.timer = setInterval(makePhoneLink, 4 * 60 * 1000); } // 코드는 5분짜리라 만료 전에 새로
+    phoneStatus('확인하는 중…', 'alone');
+    const r = await fetch('/api/remote/view/join', { method: 'POST', body: JSON.stringify({ key }) }).catch(() => null);
+    if (!r?.ok) { phoneStatus('서버에 연결하지 못했어요', 'off'); return; }
+    Ph.token = (await r.json()).token;
+    Ph.es = new EventSource(`/api/remote/view/events?token=${encodeURIComponent(Ph.token)}`);
+    Ph.es.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.type !== 'agent') return;
+      if (m.online && m.platform === 'android') phoneStatus(`폰이 연결됐어요 (${m.name || '폰'}) — 컴퓨터의 원격 화면 보기에서 볼 수 있어요`, 'on');
+      else if (m.online) phoneStatus('컴퓨터(PC) 에이전트가 연결돼 있어요 — 폰은 아직 연결되지 않았어요', 'alone');
+      else phoneStatus('아직 폰이 연결되지 않았어요', 'alone');
+    };
+    Ph.es.onerror = () => phoneStatus('다시 연결하는 중…', 'off');
+  }
+  SCREENS.push('phoneScreen');
+  $r('mPhone').onclick = openPhone;
+  $r('mPcMenu').onclick = () => { closeSheets(); $r('pcMenu').hidden = false; };
+  $r('mPcClose').onclick = closeSheets;
+  $r('mPcMenu').hidden = IS_MOBILE; // PC 쪽 항목(허용 켜기·화면 보기)은 PC 에서만
+  $r('phoneBack').onclick = () => { phoneClose(); enterChat(); };
+  addEventListener('pagehide', phoneClose);
   SCREENS.push('hostScreen');
   $r('mHost').onclick = openHost;
   $r('mHost').hidden = IS_MOBILE; // 조종당하는 쪽은 PC

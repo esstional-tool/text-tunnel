@@ -31,6 +31,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/manifest+json',
   '.svg': 'image/svg+xml', '.png': 'image/png',
+  '.apk': 'application/vnd.android.package-archive', // 폰 원격 앱(public/download/text-tunnel-phone.apk, 이슈 #48)
 };
 
 /* ── 방 ─────────────────────────────────── */
@@ -157,7 +158,10 @@ function serveStatic(url, res) {
   if (!file.startsWith(PUB)) return send(res, 403, 'forbidden');
   fs.readFile(file, (err, data) => {
     if (err) return send(res, 404, 'not found');
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    const ext = path.extname(file);
+    const head = { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache' };
+    if (ext === '.apk') { head['Content-Disposition'] = 'attachment; filename="text-tunnel-phone.apk"'; head['Content-Length'] = data.length; } // 열지 않고 내려받게
+    res.writeHead(200, head);
     res.end(data);
   });
 }

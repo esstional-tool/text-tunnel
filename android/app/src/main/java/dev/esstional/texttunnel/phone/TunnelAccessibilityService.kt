@@ -43,9 +43,10 @@ class TunnelAccessibilityService : AccessibilityService() {
     private var downAt = 0L
     private val pts = ArrayList<FloatArray>()
 
-    override fun onServiceConnected() { instance = this }
-    override fun onUnbind(intent: android.content.Intent?): Boolean { instance = null; return super.onUnbind(intent) }
-    override fun onDestroy() { if (instance === this) instance = null; super.onDestroy() }
+    // 접근성 서비스가 켜지고 꺼지는 순간 바로 서버에 "조종 가능/불가"를 알린다 (3초 주기 확인을 기다리지 않고)
+    override fun onServiceConnected() { instance = this; AgentService.refreshControl() }
+    override fun onUnbind(intent: android.content.Intent?): Boolean { instance = null; AgentService.refreshControl(); return super.onUnbind(intent) }
+    override fun onDestroy() { if (instance === this) { instance = null; AgentService.refreshControl() }; super.onDestroy() }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
 
@@ -53,7 +54,7 @@ class TunnelAccessibilityService : AccessibilityService() {
     fun apply(events: JSONArray) {
         main.post {
             for (i in 0 until events.length()) {
-                try { one(events.getJSONObject(i)) } catch (_: Exception) {}
+                try { one(events.getJSONObject(i)) } catch (e: Exception) { if (BuildConfig.DEBUG) Log.w("TT_GESTURE", "input error: $e") }
             }
         }
     }
@@ -81,7 +82,7 @@ class TunnelAccessibilityService : AccessibilityService() {
             "m" -> if (down && pts.size < 400) pts.add(xy(e))
             "d" -> when (e.optInt("b")) {
                 0 -> { down = true; downAt = SystemClock.uptimeMillis(); pts.clear(); pts.add(xy(e)) }
-                2 -> performGlobalAction(GLOBAL_ACTION_BACK)   // 오른쪽 버튼 = 뒤로
+                2 -> { val r = performGlobalAction(GLOBAL_ACTION_BACK); if (BuildConfig.DEBUG) Log.i("TT_GESTURE", "back(right button) ok=$r") }   // 오른쪽 버튼 = 뒤로
                 1 -> performGlobalAction(GLOBAL_ACTION_HOME)   // 가운데 버튼 = 홈
             }
             "u" -> if (e.optInt("b") == 0 && down) { pts.add(xy(e)); finishTouch() }
@@ -166,7 +167,9 @@ class TunnelAccessibilityService : AccessibilityService() {
     /** 글자를 포커스가 있는 입력칸의 커서(선택 영역) 위치에 넣는다 */
     private fun insert(text: String): Boolean {
         if (text.isEmpty()) return false
-        val node = focusedInput() ?: return false
+        val node = focusedInput()
+        if (BuildConfig.DEBUG) Log.i("TT_GESTURE", "insert len=${text.length} focus=${node != null}")
+        if (node == null) return false
         val cur = if (node.isShowingHintText) "" else (node.text?.toString() ?: "")
         val (a, b) = selection(node, cur)
         val next = cur.substring(0, a) + text + cur.substring(b)

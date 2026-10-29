@@ -682,7 +682,7 @@ function openMenu() {
   $('mInstall').hidden = STANDALONE || !(installPrompt || IS_MOBILE);
   $('menu').hidden = false;
 }
-const closeSheets = () => { $('menu').hidden = true; $('confirm').hidden = true; };
+const closeSheets = () => { $('menu').hidden = true; $('pcMenu').hidden = true; $('confirm').hidden = true; };
 
 function rename() {
   closeSheets();
@@ -885,7 +885,7 @@ $('trashBtn').onclick = () => {
   clearChat();
 };
 $('confirmCancel').onclick = closeSheets;
-for (const s of ['menu', 'confirm']) $(s).onclick = (e) => { if (e.target === $(s)) closeSheets(); };
+for (const s of ['menu', 'pcMenu', 'confirm']) $(s).onclick = (e) => { if (e.target === $(s)) closeSheets(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheets(); });
 
 // 앱 창이 앞에 있을 때의 완전 정리 단축키. 확장의 전역 단축키는 다른 프로그램이 같은 키를 먼저 잡으면
