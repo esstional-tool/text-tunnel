@@ -5,7 +5,7 @@
 // 밀리면 버리기: 한 장을 가져오는 중에 알림이 여러 개 와도 끝난 뒤 "최신 것" 한 번만 다시 가져온다.
 (() => {
   const $r = (id) => document.getElementById(id);
-  const R = { token: null, es: null, fetching: false, again: false, online: false, authed: false, pin: null, ctlAllowed: false, ctl: false, q: [], sending: false, flushT: 0, keys: new Map(), held: new Set(), lastPos: null, w: 0, h: 0, seq: 0, stats: [] };
+  const R = { token: null, es: null, fetching: false, again: false, online: false, authed: false, platform: 'pc', pin: null, ctlAllowed: false, ctl: false, q: [], sending: false, flushT: 0, keys: new Map(), held: new Set(), lastPos: null, w: 0, h: 0, seq: 0, stats: [] };
   // PIN 은 이 화면의 메모리에만 둔다 (저장 안 함, 새로고침·뒤로 가기에서 사라짐). 연결이 잠깐 끊겨 다시 들어갈 때 자동으로 다시 넣으려는 용도
   SCREENS.push('remoteScreen'); // app.js 의 화면 전환(show)이 이 화면도 알게 한다
 
@@ -29,7 +29,7 @@
     R.es.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if (m.type === 'agent') {
-        R.online = m.online; R.name = m.name;
+        R.online = m.online; R.name = m.name; R.platform = m.platform || 'pc'; // 폰 에이전트(#46)면 'android'
         if (!m.online) { R.authed = false; setControlState(false, false); $r('pinForm').hidden = true; $r('remoteEmpty').hidden = false; clearCanvas(); setStatus('원격 PC 의 에이전트가 꺼져 있어요', 'alone'); return; }
         $r('remoteEmpty').hidden = true;
         if (R.authed) { setStatus(`${m.name || '노트북'} 화면을 받는 중…`, 'on'); return; }
@@ -158,6 +158,7 @@
     const b = $r('remoteCtl');
     $r('remoteProfile').hidden = !R.authed;
     b.hidden = !R.authed;
+    $r('remotePhoneBar').hidden = !(R.authed && R.ctl && R.platform === 'android'); // 폰 도구줄 (이슈 #46)
     b.disabled = !R.ctlAllowed;
     b.classList.toggle('on', R.ctl);
     b.textContent = R.ctl ? '조종 끄기' : (R.ctlAllowed ? '조종 켜기' : '조종 불가');
@@ -182,7 +183,9 @@
     c.addEventListener('wheel', (e) => { if (!R.ctl) return; e.preventDefault(); queue({ t: 'w', dx: Math.round(e.deltaX), dy: Math.round(e.deltaY) }); }, { passive: false });
     c.addEventListener('keydown', (e) => {
       if (!R.ctl) return; const k = vkOf(e.code); if (!k) return;
-      e.preventDefault(); R.keys.set(k.vk, k.e); queue({ t: 'k', vk: k.vk, d: 1, e: k.e });
+      e.preventDefault(); R.keys.set(k.vk, k.e);
+      const ch = e.key && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey ? e.key : undefined; // 폰은 키 코드가 아니라 입력된 글자가 필요하다 (PC 에이전트는 무시)
+      queue(ch ? { t: 'k', vk: k.vk, d: 1, e: k.e, ch } : { t: 'k', vk: k.vk, d: 1, e: k.e });
     });
     c.addEventListener('keyup', (e) => {
       if (!R.ctl) return; const k = vkOf(e.code); if (!k) return;
@@ -195,6 +198,8 @@
       R.keys.clear(); R.held.clear();
     }); // 포커스를 잃으면 눌린 키를 모두 뗀다
     $r('remoteCtl').onclick = toggleControl;
+    for (const b of $r('remotePhoneBar').querySelectorAll('[data-nav]')) b.onclick = () => queue({ t: 'n', a: b.dataset.nav }); // 폰 뒤로·홈·최근·알림
+    $r('phoneTextForm').onsubmit = (e) => { e.preventDefault(); const v = $r('phoneText').value; if (v) { queue({ t: 's', s: v }); $r('phoneText').value = ''; } }; // 한글 등 글자를 통째로
     $r('remoteProfile').onchange = sendProfile;
   }
 

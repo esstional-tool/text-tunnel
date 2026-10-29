@@ -57,6 +57,7 @@ function parseBundle(buf, W, H) {
 }
 
 // 입력 이벤트 한 개를 검사해 정리한다 (모르는 모양은 버린다). 좌표는 화면 비율 0~1
+const NAV_ACTIONS = new Set(['back', 'home', 'recents', 'notifications']);
 const num = (x, lo, hi) => (Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : null);
 function cleanInput(e) {
   if (!e || typeof e !== 'object') return null;
@@ -66,7 +67,17 @@ function cleanInput(e) {
     return x === null || y === null || b < 0 || b > 2 ? null : { t: e.t, x, y, b };
   }
   if (e.t === 'w') { const dx = num(e.dx, -2000, 2000), dy = num(e.dy, -2000, 2000); return dx === null || dy === null ? null : { t: 'w', dx: Math.round(dx), dy: Math.round(dy) }; }
-  if (e.t === 'k') { const vk = e.vk | 0; return vk < 1 || vk > 254 ? null : { t: 'k', vk, d: e.d ? 1 : 0, e: e.e ? 1 : 0 }; }
+  if (e.t === 'k') {
+    const vk = e.vk | 0; if (vk < 1 || vk > 254) return null;
+    const out = { t: 'k', vk, d: e.d ? 1 : 0, e: e.e ? 1 : 0 };
+    if (typeof e.ch === 'string' && [...e.ch].length === 1 && !/[\u0000-\u001f\u007f]/.test(e.ch)) out.ch = e.ch; // 폰(안드로이드)은 키 코드 대신 입력된 글자가 필요하다
+    return out;
+  }
+  if (e.t === 'n') return NAV_ACTIONS.has(e.a) ? { t: 'n', a: e.a } : null;   // 폰 이동 동작: 뒤로·홈·최근·알림
+  if (e.t === 's') { // 글자 보내기(한글 포함). 제어 문자는 버리고 200자까지
+    const s = typeof e.s === 'string' ? e.s.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').slice(0, 200) : '';
+    return s ? { t: 's', s } : null;
+  }
   if (e.t === 'r') return { t: 'r' }; // 눌려 있던 키·버튼 모두 떼기
   return null;
 }
@@ -146,7 +157,7 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
         if (s.agent) dropToken(s.agent.token); // 같은 에이전트가 다시 들어오면 이전 연결을 정리
         const token = issue(s.ns, 'agent');
         const s2 = session(s.ns); // dropToken 이 세션을 지웠을 수 있어서 다시 확인
-        s2.agent = { token, name: String(j.name || 'PC').slice(0, 30), res: null };
+        s2.agent = { token, name: String(j.name || 'PC').slice(0, 30), platform: j.platform === 'android' ? 'android' : 'pc', res: null }; // 폰 에이전트(#46)는 platform 을 알린다 — 보는 화면이 폰 도구줄을 보여주려고
         send(res, 200, { token });
       });
       return true;
@@ -306,7 +317,7 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
       a.s.agent.res = res;
       sse(req, res, () => dropToken(a.token));
       a.s.agent.control = false; // 에이전트가 허용 상태를 알려 올 때까지는 꺼짐으로 본다
-      notifyAll(a.s, { type: 'agent', online: true, name: a.s.agent.name });
+      notifyAll(a.s, { type: 'agent', online: true, name: a.s.agent.name, platform: a.s.agent.platform });
       notifyAgent(a.s);
       return true;
     }
@@ -317,7 +328,7 @@ module.exports = function createRemote({ readBody, send, crypto, authTimeoutMs =
       const v = a.s.viewers.get(a.token);
       v.res = res;
       sse(req, res, () => dropToken(a.token));
-      push(res, { type: 'agent', online: !!a.s.agent?.res, name: a.s.agent?.name });
+      push(res, { type: 'agent', online: !!a.s.agent?.res, name: a.s.agent?.name, platform: a.s.agent?.platform });
       push(res, ctlState(a.s, v));
       if (v.ok && a.s.frame) push(res, { type: 'frame', seq: a.s.frame.seq, w: a.s.frame.w, h: a.s.frame.h });
       notifyAgent(a.s);

@@ -3,3 +3,12 @@ tools/
 *.log
 agent/remote-agent.exe
 agent/*.pdb
+
+# 안드로이드 폰 에이전트 (이슈 #46)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/*.keystore
+android/*.jks
+*.apk

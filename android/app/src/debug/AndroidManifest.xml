@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 디버그 빌드만: 같은 PC 의 로컬 서버(http)에 연결해 시험하려고 평문 통신을 허용한다. 배포용(release)은 https 만 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:networkSecurityConfig="@xml/network_security_config" />
+</manifest>
