@@ -362,6 +362,9 @@
   }
   SCREENS.push('phoneScreen');
   $r('mPhone').onclick = openPhone;
+  $r('mPcMenu').onclick = () => { closeSheets(); $r('pcMenu').hidden = false; };
+  $r('mPcClose').onclick = closeSheets;
+  $r('mPcMenu').hidden = IS_MOBILE; // PC 쪽 항목(허용 켜기·화면 보기)은 PC 에서만
   $r('phoneBack').onclick = () => { phoneClose(); enterChat(); };
   addEventListener('pagehide', phoneClose);
   SCREENS.push('hostScreen');
