@@ -89,6 +89,15 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 
 ---
 
+### 휴대폰에서 원격 보기
+
+<table>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/13-remote-phone.png" width="230"><br><b>맞춤</b><br>화면 전체가 폭에 맞음 · 보기 전용</td>
+    <td align="center" valign="top"><img src="docs/screenshots/14-remote-phone-zoom.png" width="230"><br><b>확대</b><br>원본 크기로 키워 밀어서 이동</td>
+  </tr>
+</table>
+
 ## 기능
 
 ### 1. 연결
@@ -144,6 +153,7 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 - **Windows 시작 시 자동 실행**: 트레이 메뉴 체크 (또는 `--autostart on|off`) — 시작 프로그램(HKCU Run)에 등록/삭제, 관리자 권한 불필요
 - **노트북에서 에이전트 실행** (직접 빌드하는 방법): `agent\build-agent.cmd` 로 빌드 (Windows 에 내장된 컴파일러라 설치 불필요, `agentemote-agent.exe` 생성) → 처음 한 번 `remote-agent.exe --code ABC123` (메신저 메뉴 → 새 기기 연결 의 코드, 같은 짝 열쇠를 받음) → 그다음부터는 `remote-agent.exe` 만. 시계 옆 트레이 아이콘에서 ON/OFF·종료
 - **접속 PIN (이슈 #21) — 조종당하는 PC 의 주인이 정한다**: 트레이 아이콘 메뉴 → **접속 PIN 설정…** (또는 `remote-agent.exe --set-pin 123456`, 6~12자리 숫자). **PIN 을 정하기 전에는 아무도 화면을 볼 수 없다.** PIN 은 에이전트 PC 에만 해시(PBKDF2)로 저장되고, 맞는지도 **서버가 아니라 에이전트가** 확인한다 (서버·보는 쪽은 PIN 을 저장하지 않음)
+- **휴대폰에서도 보기 (이슈 #44)**: 휴대폰 메뉴에도 **원격 화면 보기**가 있다 (PIN 입력 → 화면). **보기 전용**(조종 단추는 숨김), **확대/맞춤** 단추로 원본 크기(1:1)로 키워 손가락으로 밀어 볼 수 있고(차트 숫자 읽기), 보는 동안 **화면이 꺼지지 않게** 한다. 폰을 **가로로 돌리면** 더 크게 보인다
 - **보는 PC**: 메신저 메뉴 → **원격 화면 보기** → PIN 입력 → 초당 프레임·한 장 크기·KB/s 가 함께 표시됨
 - **안전장치**: 보는 동안 노트북 화면 맨 위에 **빨간 "원격 접속 중" 띠**가 항상 떠 있고(1초마다 다시 맨 위로 — 다른 창이 덮어도 복구) · 누가 보기 시작하는 순간 **토스트 알림 + 소리**, 끝나면 토스트 (`--quiet` 로 끌 수 있음). **알림은 조종당하는 PC 에서만 나오고 보는 쪽에는 없음** · 보는 사람이 없으면 화면을 찍지도 보내지도 않음 · 트레이에서 언제든 OFF · 같은 짝 열쇠를 가진 기기만 볼 수 있음
 - **조종 (이슈 #23) — 보기와 별개의 허용**: 기본은 **꺼짐(보기만)**. 조종당하는 PC 의 주인이 트레이 메뉴 **원격 조종 허용** (또는 `--allow-control`, 설정은 `control.on` 파일로 저장)을 켜야 하고, 보는 사람이 화면 위 **조종 켜기** 단추를 눌러야 입력이 간다. 조종 중에는 띠가 **"원격 조종 중"**(자주색)으로 바뀌고 캔버스에 테두리가 생긴다
@@ -201,6 +211,7 @@ node tests/replay.test.js http://localhost:8787                 # 놓친 메시�
 node tests/remote-patch.test.js http://localhost:8787           # 바뀐 부분 서버 31항목 — 키 프레임/조각 저장·번호 이후 묶음·잘못된 묶음 거절·상한
 node tests/remote-dirty.test.js http://localhost:8787           # 바뀐 부분 진짜 에이전트(합성 화면 --fake-screen) — 바뀐 칸만 오는지·합쳐짐·주기적 전체 화면
 node tests/pick.test.js http://localhost:8787                     # 고른 파일 붙잡기 8항목 (Edge — 읽기가 실패하는 가짜 파일, 원본이 사라진 뒤에도 복사본 업로드)
+node tests/remote-mobile.test.js http://localhost:8787            # 휴대폰 원격 보기 16항목 (Edge 모바일 에뮬레이션 + 진짜 에이전트) — Windows
 node tests/share.test.js http://localhost:8787                    # 받은 파일 공유 21항목 (Edge — navigator.share 를 가짜로 바꿔 넘어가는 파일 확인, 폰이 서버에 올린 PDF 의 전체 경로 포함)
 node tests/agent-zip.test.js http://localhost:8787               # 에이전트 zip 17항목 (내용·CRC·주입 방어·zip 만으로 빌드·자동 실행 등록/삭제) — Windows
 node tests/remote-host-ui.test.js http://localhost:8787         # "이 PC 원격 허용 켜기" 화면 14항목 (Edge) — Windows
