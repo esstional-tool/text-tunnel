@@ -11,7 +11,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Text Tunnel 폰"
+        android:label="@string/app_name"
         android:supportsRtl="true">
 
         <activity
@@ -36,19 +36,5 @@
             android:name=".AgentService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
-
-        <!-- 터치·뒤로·홈·글자 입력을 넣는 접근성 서비스 (사용자가 설정에서 직접 켜야 함) -->
-        <service
-            android:name=".TunnelAccessibilityService"
-            android:exported="true"
-            android:label="Text Tunnel 폰 조종"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
     </application>
 </manifest>

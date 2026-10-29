@@ -20,6 +20,7 @@
 | 2026-10-26 | [#40](https://github.com/esstional-tool/text-tunnel/issues/40) | [고른 파일을 보낼 때까지 믿지 않기](2026-10-26-40-hold-picked-files.md) | File 은 참조일 수 있음·스냅샷 · 살아 있는 FileList · 같은 증상의 다른 원인 가르기 · 실패를 가짜 파일로 흉내 |
 | 2026-10-29 | [#46](https://github.com/esstional-tool/text-tunnel/issues/46) | [컴퓨터로 폰 원격 조종](2026-10-29-46-phone-remote.md) | MediaProjection 화면 캡처 · 안드로이드 14+ 포그라운드 서비스 규칙 · 접근성 서비스 dispatchGesture(마우스→터치 번역) · 입력칸 커서에 글자 넣기 · 라이브러리 없는 안드로이드 앱 |
 | 2026-10-29 | [#48](https://github.com/esstional-tool/text-tunnel/issues/48) | [휴대폰 원격 연결하기 버튼](2026-10-29-48-phone-connect-button.md) | 안드로이드 인텐트 링크(앱 열기/폴백 다운로드) · 딥링크 · APK 서명·배포 · 에뮬레이터 시험의 함정 |
+| 2026-10-29 | [#50](https://github.com/esstional-tool/text-tunnel/issues/50) | [폰 앱 보기 전용 버전](2026-10-29-50-phone-view-only.md) | Play 프로텍트 차단 · 안드로이드 product flavor · flavor 별 소스·매니페스트 · APK 매니페스트 확인(aapt2) |
 
 ## 노트 쓰는 법 (다음 작업부터 같은 형식)
 

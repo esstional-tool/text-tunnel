@@ -160,7 +160,7 @@ function serveStatic(url, res) {
     if (err) return send(res, 404, 'not found');
     const ext = path.extname(file);
     const head = { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache' };
-    if (ext === '.apk') { head['Content-Disposition'] = 'attachment; filename="text-tunnel-phone.apk"'; head['Content-Length'] = data.length; } // 열지 않고 내려받게
+    if (ext === '.apk') { head['Content-Disposition'] = `attachment; filename="${path.basename(file)}"`; head['Content-Length'] = data.length; } // 열지 않고 내려받게
     res.writeHead(200, head);
     res.end(data);
   });
