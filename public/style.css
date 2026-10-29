@@ -142,6 +142,13 @@ input, textarea { font: inherit; color: var(--text); }
 .host-timer { margin: 8px 0 0 !important; font-size: 12px; }
 .host-note { margin: 18px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
 .remote-ctl { margin-left: auto; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 999px; padding: 6px 12px; font-weight: 600; font-size: 13px; font-family: inherit; cursor: pointer; }
+.phone-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; background: var(--bar); border-bottom: 1px solid var(--line); }
+.phone-nav { display: flex; gap: 6px; }
+.phone-nav button, .phone-text button { padding: 7px 14px; border-radius: 999px; background: var(--bg-2); color: var(--text); font-weight: 700; font-size: 13px; }
+.phone-nav button:active, .phone-text button:active { background: var(--accent-soft); color: var(--accent); }
+.phone-text { flex: 1; min-width: 200px; display: flex; gap: 6px; }
+.phone-text input { flex: 1; min-width: 0; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 14px; outline: none; }
+.phone-text input:focus { border-color: var(--accent); }
 .remote-ctl:disabled { opacity: .5; cursor: not-allowed; }
 .remote-ctl.on { background: #b3125a; border-color: #b3125a; color: #fff; }
 .remote-stage canvas:focus { outline: none; }

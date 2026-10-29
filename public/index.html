@@ -98,6 +98,19 @@
       <select id="remoteProfile" class="remote-profile" aria-label="화질·속도" hidden><option value="auto">자동</option><option value="quality">화질 우선</option><option value="speed">속도 우선</option></select>
       <button id="remoteCtl" class="remote-ctl" type="button" hidden>조종 켜기</button>
     </header>
+    <!-- 폰 원격 조종 도구줄 (이슈 #46): 에이전트가 폰(android)이고 조종이 켜졌을 때만 -->
+    <div id="remotePhoneBar" class="phone-bar" hidden>
+      <div class="phone-nav" role="group" aria-label="폰 이동 단추">
+        <button type="button" data-nav="back" title="뒤로">뒤로</button>
+        <button type="button" data-nav="home" title="홈">홈</button>
+        <button type="button" data-nav="recents" title="최근 앱">최근</button>
+        <button type="button" data-nav="notifications" title="알림창">알림</button>
+      </div>
+      <form id="phoneTextForm" class="phone-text" autocomplete="off">
+        <input id="phoneText" type="text" maxlength="200" placeholder="폰에 글자 보내기 (한글 가능)" aria-label="폰에 글자 보내기">
+        <button type="submit">보내기</button>
+      </form>
+    </div>
     <div class="remote-stage">
       <canvas id="remoteCanvas" width="16" height="9" tabindex="0" aria-label="원격 화면 (조종을 켜면 여기에서 마우스·키보드가 전달돼요)"></canvas>
       <form id="pinForm" class="remote-pin" hidden novalidate>

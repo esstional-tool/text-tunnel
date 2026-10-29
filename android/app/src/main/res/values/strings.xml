@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_desc">원격으로 들어온 터치·뒤로·홈·글자 입력을 이 폰에 넣어 줍니다. 앱에서 \'조종 허용\'을 켰을 때만 동작하며, 화면 내용을 저장하지 않습니다.</string>
+</resources>

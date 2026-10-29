@@ -150,6 +150,7 @@ GitHub 파일 화면은 인쇄(Ctrl+P)하면 본문이 비어 나온다. 인쇄�
 - **즉시 중지**: **Ctrl+Alt+F12**(어느 창이 앞에 있든) · 트레이 "조종 즉시 중지" · 설정 폴더에 `panic.now` 파일 만들기 → 조종 허용이 꺼지고, 눌려 있던 키·마우스 버튼도 모두 뗌. 다시 쓰려면 주인이 허용을 다시 켜야 함
 - 입력은 **PIN 을 통과한 보는 사람**의 것만 (서버가 막고, 에이전트가 자기가 확인해 준 사람인지 다시 확인). 마우스 좌표는 화면 비율(0~1)이라 해상도·배율이 달라도 맞음. 키 입력 내용은 서버도 에이전트도 **저장·기록하지 않음**
 - Ctrl+Alt+Del·잠금 화면·관리자 권한 창(UAC)은 Windows 가 막아 조종 불가. 브라우저가 가로채는 키(Ctrl+W, F5 일부 등)는 전달되지 않을 수 있음
+- **폰 원격 조종 — 컴퓨터로 휴대폰 화면 보기·조종 (이슈 #46, 안드로이드)**: 폰에 설치하는 작은 앱(`android/`, 자세한 사용법은 [android/README.md](android/README.md))이 PC 에이전트와 **같은 프로토콜**로 서버에 입장한다. PC 의 *원격 화면 보기* 가 그대로 쓰이고, 에이전트가 폰이면 **폰 도구줄**(뒤로·홈·최근·알림·글자 보내기)이 나타난다. 마우스 클릭=탭(0.5초 넘게=길게), 드래그=스와이프, 휠=스크롤, 오른쪽 버튼=뒤로, 가운데=홈, 키보드 글자=입력칸(한글은 글자 보내기 칸). 화면 캡처는 MediaProjection, 터치 주입은 접근성 서비스. 안전장치: 화면 공유 중 **알림이 항상 떠 있고 중지·조종 끄기 단추**, **PIN 은 폰 주인이 정하고 폰이 직접 확인**, **조종은 별도 허용(기본 꺼짐)**. 웹(PWA)만으로는 안드로이드 브라우저가 화면 공유·입력 주입을 못 해서 앱이 필요하고, 아이폰은 OS 가 허용하지 않는다
 - **무차별 대입 방어**: 에이전트에서 5번 틀리면 10분간 잠금 · 서버도 보는 기기당 5번, 열쇠당 10분에 10번으로 막음 (`REMOTE_AUTH_TIMEOUT_SEC` 로 확인 대기 시간 조절, 기본 8초)
 - **접속 기록**: 에이전트 옆 `access.log` 에 접속 시작/끝·PIN 실패를 남김 (PIN·열쇠·화면 내용은 기록 안 함)
 - **바뀐 부분만 전송 (이슈 #24)**: 에이전트가 화면을 64x64 칸으로 나눠 이전 화면과 비교하고, **바뀐 칸만 조각**으로 보낸다 (바뀐 게 없으면 아무것도 안 보냄 · 면적이 60% 이상 바뀌거나 10초마다·처음·서버 요청 시에는 전체 화면). 보는 화면은 조각을 캔버스에 덧그린다. 속도 표시에 갱신 횟수·평균 크기·조각 수가 나온다. (합성 화면 시험에서 초당 약 150KB → 약 6KB)
@@ -201,6 +202,9 @@ node tests/replay.test.js http://localhost:8787                 # 놓친 메시�
 node tests/remote-patch.test.js http://localhost:8787           # 바뀐 부분 서버 31항목 — 키 프레임/조각 저장·번호 이후 묶음·잘못된 묶음 거절·상한
 node tests/remote-dirty.test.js http://localhost:8787           # 바뀐 부분 진짜 에이전트(합성 화면 --fake-screen) — 바뀐 칸만 오는지·합쳐짐·주기적 전체 화면
 node tests/pick.test.js http://localhost:8787                     # 고른 파일 붙잡기 8항목 (Edge — 읽기가 실패하는 가짜 파일, 원본이 사라진 뒤에도 복사본 업로드)
+node tests/remote-phone.test.js http://localhost:8787             # 폰 원격 서버 9항목 — platform·폰용 입력(n 이동 동작, s 글자, k 의 ch) 검사
+node tests/remote-phone-ui.test.js http://localhost:8787          # 폰 도구줄 8항목 (Edge + 가짜 폰 에이전트)
+node tests/phone-agent.test.js http://localhost:8787              # 폰 앱 실제 시험 (에뮬레이터 필요 — android/README.md 의 "폰 원격 시험")
 node tests/share.test.js http://localhost:8787                    # 받은 파일 공유 21항목 (Edge — navigator.share 를 가짜로 바꿔 넘어가는 파일 확인, 폰이 서버에 올린 PDF 의 전체 경로 포함)
 node tests/agent-zip.test.js http://localhost:8787               # 에이전트 zip 17항목 (내용·CRC·주입 방어·zip 만으로 빌드·자동 실행 등록/삭제) — Windows
 node tests/remote-host-ui.test.js http://localhost:8787         # "이 PC 원격 허용 켜기" 화면 14항목 (Edge) — Windows

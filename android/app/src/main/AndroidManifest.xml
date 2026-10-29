@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 서버와 통신 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 화면 공유 중 알림(항상 떠 있음) + 앱이 꺼지지 않게 포그라운드 서비스 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:allowBackup="false"
+        android:label="Text Tunnel 폰"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 화면 캡처 + 서버 연결 (보는 사람이 있을 때만 캡처) -->
+        <service
+            android:name=".AgentService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- 터치·뒤로·홈·글자 입력을 넣는 접근성 서비스 (사용자가 설정에서 직접 켜야 함) -->
+        <service
+            android:name=".TunnelAccessibilityService"
+            android:exported="true"
+            android:label="Text Tunnel 폰 조종"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+    </application>
+</manifest>
