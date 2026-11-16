@@ -182,6 +182,7 @@ function connect() {
     }
     if (m.type === 'presence') onPresence(m.users);
     else if (m.type === 'clear') { clearList(); toast(isMine(m) ? '대화를 지웠어요' : `${m.name}에서 대화를 지웠어요`); }
+    else if (m.type?.startsWith('stream')) onStream(m); // 큰 파일 PC 직접 저장 (stream.js)
     else add(m);
   };
 }
@@ -498,7 +499,7 @@ async function uploadOne(file, batch, onProgress, onRetry) {
 }
 
 // 고른 파일들을 한 묶음으로 보낸다. 사진은 같은 batch로 올려 받는 쪽에서 앨범 하나로 묶이게 한다
-async function sendFiles(files, original) {
+async function sendFiles(files, original, stream = false) {
   files = files.filter((f) => f.size > 0);
   if (!files.length) return;
   const batch = randId().replace(/[^\w-]/g, '').slice(0, 40);
@@ -517,7 +518,7 @@ async function sendFiles(files, original) {
   place(li);
 
   const prepared = [];
-  for (const f of files) prepared.push(original || kindOf(f) !== 'image' ? f : await shrink(f));
+  for (const f of files) prepared.push(original || stream || kindOf(f) !== 'image' ? f : await shrink(f));
   const total = prepared.reduce((s, f) => s + f.size, 0);
   let done = 0;
   const failed = [];
@@ -525,13 +526,14 @@ async function sendFiles(files, original) {
     const sending = files.length > 1 ? `${what} 보내는 중… ${i + 1}/${files.length}` : `${what} 보내는 중…`;
     label.textContent = sending;
     try {
-      await uploadOne(f, kindOf(f) === 'image' ? batch : null,
-        (sent) => { fill.style.width = `${((done + sent) / total) * 100}%`; label.textContent = sending; },
+      const onSent = (sent) => { fill.style.width = `${((done + sent) / total) * 100}%`; label.textContent = sending; };
+      if (stream) await sendStream(f, onSent, (msg) => { label.textContent = msg; }); // PC 에 바로 저장 (stream.js) — 서버 메모리를 거치지 않는다
+      else await uploadOne(f, kindOf(f) === 'image' ? batch : null, onSent,
         (n) => { label.textContent = `연결이 끊겨 다시 시도하는 중… (${n}/${RETRY_MAX})`; });
     } catch (e) { failed.push(`${f.name}: ${e.message}`); }
     done += f.size;
   }
-  if (!failed.length) return li.remove();
+  if (!failed.length) { if (stream) toast(`${what}를 PC 에 보냈어요 · 저장은 PC 에서 확인하세요`); return li.remove(); }
   b.classList.add('failed'); bar.remove();
   label.textContent = `${failed.length}개를 못 보냈어요 · ${failed.join(', ')}`;
 }
@@ -599,6 +601,7 @@ function renderTray() {
   const vids = tray.filter((t) => kindOf(t.file) === 'video').length;
   const docs = tray.length - imgs - vids;
   $('originalWrap').hidden = !imgs;
+  $('streamWrap').hidden = !IS_MOBILE;
   $('trayInfo').textContent = [imgs && `사진 ${imgs}`, vids && `동영상 ${vids}`, docs && `파일 ${docs}`].filter(Boolean).join(' · ')
     + ` · ${fmtSize(tray.reduce((s, t) => s + t.file.size, 0))}`;
   $('traySend').textContent = `${tray.length}개 보내기`;
@@ -614,9 +617,10 @@ function clearTray() {
 function sendTray() {
   if (!tray.length) return;
   const files = tray.map((t) => t.file);
+  const stream = IS_MOBILE && $('streamToggle').checked; // 휴대폰에서만 — PC 에 바로 저장 (이슈 #55)
   const original = $('original').checked;
   clearTray();
-  sendFiles(files, original);
+  sendFiles(files, original, stream);
 }
 
 /* ── 첨부 패널 ─────────────────────────── */

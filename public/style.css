@@ -375,3 +375,12 @@ time { font-size: 11px; color: var(--chat-muted); white-space: nowrap; flex: non
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ── 큰 파일 PC 직접 저장 (이슈 #55) ───────────── */
+.stream-info { margin-top: 2px; font-size: 13px; opacity: .8; }
+.stream-state { margin-top: 6px; font-size: 13px; }
+.stream-state.bad { color: var(--danger); }
+.stream-btns { display: flex; gap: 8px; margin-top: 10px; }
+.stream-btns button { flex: 1; padding: 9px 0; border-radius: 12px; font-weight: 700; font-size: 14px; }
+.stream-accept { background: var(--accent); color: var(--accent-text); }
+.stream-decline { background: var(--bg-2); color: var(--muted); }
