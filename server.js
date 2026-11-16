@@ -41,6 +41,7 @@ function destroyRoom(id) {
   for (const [t, m] of room.members) { tokens.delete(t); clearTimeout(m.timer); m.res?.end(); }
   for (const f of room.files.values()) { clearTimeout(f.timer); fileBytes -= f.buf.length; }
   for (const u of room.uploads.values()) clearTimeout(u.timer);
+  if (room.stream) { clearTimeout(room.stream.timer); room.stream.receiver?.destroy(); } // 큰 파일 직접 저장 중이었다면 받는 쪽 연결도 끊는다 (이슈 #55)
   rooms.delete(id);
 }
 
@@ -278,6 +279,8 @@ function agentZip(req) {
 
 /* ── 라우트 ─────────────────────────────── */
 // 원격조종 (이슈 #17) — 메신저와 분리된 모듈
+// 큰 파일 PC 직접 저장 (이슈 #55) — 조각을 메모리에 쌓지 않고 받는 쪽으로 흘린다
+const handleStream = require('./stream/server')({ readBody, send, crypto });
 const handleRemote = require('./remote/server')({ readBody, send, crypto, authTimeoutMs: (Number(process.env.REMOTE_AUTH_TIMEOUT_SEC) || 8) * 1000 }); // PIN 확인을 에이전트가 이 시간 안에 못 하면 실패 처리
 
 const server = http.createServer((req, res) => {
@@ -360,6 +363,8 @@ const server = http.createServer((req, res) => {
   const a = auth(url);
   if (!a) return send(res, 401, '다시 연결해야 해요');
   const { room, member, token } = a;
+
+  if (p.startsWith('/api/stream/')) return handleStream(req, res, url, a); // 응답은 모듈이 끝낸다
 
   if (p === '/api/ping') return send(res, 200, 'ok');
 

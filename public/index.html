@@ -268,6 +268,7 @@
       <div id="trayList" class="tray-list"></div>
       <div class="tray-bar">
         <label id="originalWrap" class="original"><input type="checkbox" id="original"> 원본 화질</label>
+        <label id="streamWrap" class="original" hidden title="큰 파일을 서버 메모리에 쌓지 않고 PC 디스크에 바로 저장 (PC 가 연결돼 있어야 해요)"><input type="checkbox" id="streamToggle"> PC에 바로 저장</label>
         <span id="trayInfo" class="tray-info tabular"></span>
         <button id="trayCancel" type="button" class="tray-cancel">취소</button>
         <button id="traySend" type="button" class="tray-send">보내기</button>
@@ -361,5 +362,6 @@
   <script src="vendor/qrcode.js"></script>
   <script src="app.js"></script>
   <script src="remote.js"></script>
+  <script src="stream.js"></script>
 </body>
 </html>
