@@ -57,6 +57,8 @@ module.exports = ({ readBody, send, crypto }) => {
         if (size > MAX_BYTES) return send(res, 413, { error: `한 번에 ${Math.floor(MAX_BYTES / 1024 / 1024)}MB 까지 보낼 수 있어요` });
         if (room.stream) return send(res, 409, { error: '지금 다른 파일을 보내는 중이에요. 끝난 뒤 다시 해 주세요' });
         const name = String(j?.name || 'file').slice(0, 200);
+        // 조각을 쌓지 않고 흘리므로 서버가 HEIC 를 JPG 로 바꿀 수 없다 — 이 방식으로는 보낼 수 없다고 알린다 (이슈 #59)
+        if (/\.(heic|heif)$/i.test(name) || /hei[cf]/.test(String(j?.mime || ''))) return send(res, 415, { error: 'HEIC 사진은 \'PC에 바로 저장\'으로 보낼 수 없어요. 일반 보내기를 써 주세요' });
         const next = {
           id: crypto.randomUUID(), from: member.id, fromName: member.name, name, size,
           mime: String(j?.mime || 'application/octet-stream').slice(0, 100),

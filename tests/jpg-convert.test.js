@@ -52,8 +52,8 @@ async function cdp(wsUrl) {
       const f5 = await toJpg(new File([webp], 'a.webp', { type: 'image/webp' }), false);
       out.f5 = { type: f5.type, name: f5.name };
       // 6) 읽을 수 없는 사진 (HEIC 흉내) → 안내 오류
-      try { await toJpg(new File([new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112])], 'IMG_0001.HEIC', { type: 'image/heic' }), false); out.heicError = null; }
-      catch (e) { out.heicError = e.message; }
+      const heicIn = new File([new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112])], 'IMG_0001.HEIC', { type: 'image/heic' });
+      out.heicSame = (await toJpg(heicIn, false)) === heicIn; // HEIC 는 서버가 바꾸므로 그대로 넘긴다 (이슈 #59)
       return out; })()`);
     ok(r.f1.type === 'image/jpeg' && r.f1.name === 'clear.jpg', 'PNG 가 JPG 로 바뀌고 이름도 .jpg');
     ok(r.f1.leftWhite, '투명 배경은 흰색으로 깔림');
@@ -61,7 +61,7 @@ async function cdp(wsUrl) {
     ok(r.same === true, '작은 JPG 는 그대로 (다시 그리지 않음)');
     ok(r.f4.type === 'image/jpeg' && r.f4.w === 4000, `원본 화질을 켜면 크기를 줄이지 않음 (${r.f4.w}px)`);
     ok(r.f5.type === 'image/jpeg' && r.f5.name === 'a.jpg', 'WebP 도 JPG 로 바뀜');
-    ok(typeof r.heicError === 'string' && r.heicError.includes('JPEG'), `읽을 수 없는 사진은 안내 오류: "${r.heicError}"`);
+    ok(r.heicSame === true, 'HEIC 는 브라우저에서 바꾸지 않고 그대로 넘김 (서버가 변환)');
   } catch (e) { console.log('ERROR', e); }
   try { tab?.close(); } catch {}
   process.exit(0);

@@ -423,10 +423,12 @@ const randId = () => crypto.randomUUID?.() || String(Math.random()).slice(2) + D
 const kindOf = (f) => (f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : 'file');
 
 // 카톡 '일반 화질'처럼 큰 사진은 긴 변 2048px JPEG로 줄인다. 줄일 수 없거나 더 커지면 원본 그대로
+const isHeicFile = (f) => /^image\/hei[cf]/.test(f.type) || /\.(heic|heif)$/i.test(f.name);
 // 사진은 모두 JPG 로 바꿔 보낸다 (이슈 #57). 브라우저 안에서 그림으로 다시 그려 저장하므로 서버는 바뀌지 않는다.
 // 투명 배경은 흰색으로 깐다. "원본 화질"을 켜면 크기는 줄이지 않고 품질만 높인다.
 // 브라우저가 읽지 못하는 사진(안드로이드의 HEIC 등)은 바꿀 수 없어서 예외로 알린다.
 async function toJpg(file, original) {
+  if (isHeicFile(file)) return file; // HEIC 는 서버가 JPG 로 바꾼다 (이슈 #59)
   if (file.type === 'image/jpeg' && (original || file.size < 1.5 * 1024 * 1024)) return file;
   const fail = () => new Error(`${file.name}: JPG 로 바꿀 수 없는 사진이에요 · 카메라 설정을 JPEG 로 바꿔 주세요`);
   let bmp;
@@ -490,7 +492,7 @@ async function uploadOne(file, batch, onProgress, onRetry) {
       continue;
     }
     // 다시 해도 똑같은 결과일 실패는 바로 알린다 (크기 초과, 서버 메모리 가득, 잘못된 요청)
-    if ([400, 413, 507].includes(r.status)) throw new Error(r.text || '실패');
+    if ([400, 413, 415, 507].includes(r.status)) throw new Error(r.text || '실패');
     // 연결이 끊긴 것이 아니라 "파일을 못 읽는" 경우(고른 뒤 삭제·이동·클라우드에만 있음)는 다시 해도 소용없으니 바로 이유를 알린다 — 이슈 #40
     if (r.status === 0 && !(await canRead(file, offset))) throw new Error('파일을 읽을 수 없어요 · 다시 골라 주세요');
     if (++tries > RETRY_MAX) throw new Error(r.status ? (r.text || `오류 ${r.status}`).slice(0, 80) : '연결이 끊겼어요');

@@ -281,6 +281,7 @@ function agentZip(req) {
 // 원격조종 (이슈 #17) — 메신저와 분리된 모듈
 // 큰 파일 PC 직접 저장 (이슈 #55) — 조각을 메모리에 쌓지 않고 받는 쪽으로 흘린다
 const handleStream = require('./stream/server')({ readBody, send, crypto });
+const { isHeic, heicToJpeg } = require('./media/heic'); // HEIC 사진은 서버에서 JPG 로 (이슈 #59)
 const handleRemote = require('./remote/server')({ readBody, send, crypto, authTimeoutMs: (Number(process.env.REMOTE_AUTH_TIMEOUT_SEC) || 8) * 1000 }); // PIN 확인을 에이전트가 이 시간 안에 못 하면 실패 처리
 
 const server = http.createServer((req, res) => {
@@ -445,19 +446,28 @@ const server = http.createServer((req, res) => {
     }
     if (!up || up.total !== total || up.received !== offset) return send(res, 409, '업로드 순서가 어긋났어요. 다시 보내 주세요');
 
-    return readBody(req, Math.min(CHUNK_MAX, total - offset), (err, buf) => {
+    return readBody(req, Math.min(CHUNK_MAX, total - offset), async (err, buf) => {
       if (err) { clearTimeout(up.timer); room.uploads.delete(uid); return send(res, 413, 'chunk too large'); }
       if (!rooms.has(room.id)) return send(res, 410, '연결이 끝났어요');
       up.chunks.push(buf);
       up.received += buf.length;
       if (up.received < up.total) return send(res, 200, 'more');
 
+      // 마지막 조각: HEIC 사진이면 JPG 로 바꾼 뒤 저장한다 (이슈 #59). 바꿀 수 없으면 415 로 알려 다시 시도하지 않게 한다
+      let data = Buffer.concat(up.chunks), mime = up.mime, name = up.name;
+      if (isHeic(data)) {
+        try { data = await heicToJpeg(data); }
+        catch { clearTimeout(up.timer); room.uploads.delete(uid); return send(res, 415, 'HEIC 사진을 JPG 로 바꾸지 못했어요. 카메라 설정을 JPEG 로 바꿔 주세요'); }
+        mime = 'image/jpeg'; name = name.replace(/\.[^.]+$/, '') + '.jpg';
+      }
+      if (!rooms.has(room.id)) return send(res, 410, '연결이 끝났어요'); // 바꾸는 동안 방이 사라졌을 수 있다
+
       clearTimeout(up.timer);
       room.uploads.delete(uid);
       room.done.set(uid, true); // 마지막 응답이 끊겨도 다시 시도하는 앱이 "다 받았다" 를 알 수 있게 (10분)
       setTimeout(() => room.done.delete(uid), FILE_TTL);
       const fid = crypto.randomUUID();
-      const file = { buf: Buffer.concat(up.chunks), mime: up.mime, name: up.name };
+      const file = { buf: data, mime, name };
       fileBytes += file.buf.length;
       file.timer = setTimeout(() => { room.files.delete(fid); fileBytes -= file.buf.length; }, FILE_TTL);
       room.files.set(fid, file);
