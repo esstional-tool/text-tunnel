@@ -391,11 +391,20 @@ function add(m) {
       const v = el('video'); v.src = src; v.controls = true; v.playsInline = true; v.preload = 'metadata';
       bubble.append(v, saveLink(src, m.fname, 'save-chip'), shareButton([{ src, fname: m.fname, mime: m.mime }], 'save-chip share'));
     } else {
+      // 파일 카드 (이슈 #61): 카카오톡처럼 이름·크기 아래에 "저장"·"공유" 글씨 버튼을 둔다
       bubble = el('div', 'bubble doc');
+      const top = el('div', 'doc-top');
       const ic = el('div', 'doc-icon'); ic.append(svg(ICON_FILE));
       const meta = el('div', 'doc-meta');
       meta.append(el('b', null, m.fname), el('small', null, `${fmtSize(m.size)} · 10분 뒤 만료`));
-      bubble.append(ic, meta, shareButton([{ src, fname: m.fname, mime: m.mime }], 'save share'), saveLink(src, m.fname, 'save'));
+      top.append(ic, meta);
+      const save = saveLink(src, m.fname, 'doc-btn doc-save save');
+      save.append(el('span', null, '저장'));
+      const share = shareButton([{ src, fname: m.fname, mime: m.mime }], 'doc-btn doc-share share');
+      share.append(el('span', null, '공유'));
+      const actions = el('div', 'doc-actions');
+      actions.append(save, share);
+      bubble.append(top, actions);
     }
   }
 
