@@ -423,19 +423,25 @@ const randId = () => crypto.randomUUID?.() || String(Math.random()).slice(2) + D
 const kindOf = (f) => (f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : 'file');
 
 // 카톡 '일반 화질'처럼 큰 사진은 긴 변 2048px JPEG로 줄인다. 줄일 수 없거나 더 커지면 원본 그대로
-async function shrink(file) {
-  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 1.5 * 1024 * 1024) return file;
-  try {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-    const scale = Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
-    const c = document.createElement('canvas');
-    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
-    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-    bmp.close?.();
-    const blob = await new Promise((ok) => c.toBlob(ok, 'image/jpeg', 0.85));
-    if (!blob || blob.size >= file.size) return file;
-    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
-  } catch { return file; }
+// 사진은 모두 JPG 로 바꿔 보낸다 (이슈 #57). 브라우저 안에서 그림으로 다시 그려 저장하므로 서버는 바뀌지 않는다.
+// 투명 배경은 흰색으로 깐다. "원본 화질"을 켜면 크기는 줄이지 않고 품질만 높인다.
+// 브라우저가 읽지 못하는 사진(안드로이드의 HEIC 등)은 바꿀 수 없어서 예외로 알린다.
+async function toJpg(file, original) {
+  if (file.type === 'image/jpeg' && (original || file.size < 1.5 * 1024 * 1024)) return file;
+  const fail = () => new Error(`${file.name}: JPG 로 바꿀 수 없는 사진이에요 · 카메라 설정을 JPEG 로 바꿔 주세요`);
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch { throw fail(); }
+  const scale = original ? 1 : Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close?.();
+  const blob = await new Promise((ok) => c.toBlob(ok, 'image/jpeg', original ? 0.95 : 0.85));
+  if (!blob) throw fail();
+  return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
 }
 
 // 파일 하나를 8MB 조각으로 순서대로 올린다. 서버가 다 모이면 상대에게 알린다
@@ -518,7 +524,14 @@ async function sendFiles(files, original, stream = false) {
   place(li);
 
   const prepared = [];
-  for (const f of files) prepared.push(original || stream || kindOf(f) !== 'image' ? f : await shrink(f));
+  const skipped = [];
+  for (const f of files) {
+    if (kindOf(f) !== 'image') { prepared.push(f); continue; }
+    try { prepared.push(await toJpg(f, original)); }
+    catch (e) { skipped.push(e.message); }
+  }
+  if (skipped.length) toast(skipped.length > 1 ? `${skipped[0]} 외 ${skipped.length - 1}개` : skipped[0]);
+  if (!prepared.length) return li.remove();
   const total = prepared.reduce((s, f) => s + f.size, 0);
   let done = 0;
   const failed = [];

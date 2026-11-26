@@ -22,6 +22,7 @@
 | 2026-10-29 | [#48](https://github.com/esstional-tool/text-tunnel/issues/48) | [휴대폰 원격 연결하기 버튼](2026-10-29-48-phone-connect-button.md) | 안드로이드 인텐트 링크(앱 열기/폴백 다운로드) · 딥링크 · APK 서명·배포 · 에뮬레이터 시험의 함정 |
 | 2026-10-29 | [#50](https://github.com/esstional-tool/text-tunnel/issues/50) | [폰 앱 보기 전용 버전](2026-10-29-50-phone-view-only.md) | Play 프로텍트 차단 · 안드로이드 product flavor · flavor 별 소스·매니페스트 · APK 매니페스트 확인(aapt2) |
 | 2026-11-16 | [#55](https://github.com/esstional-tool/text-tunnel/issues/55) | [큰 파일 PC 직접 저장](2026-11-16-55-stream-file-to-pc.md) | 조각 중계(메모리에 쌓지 않음) · backpressure(응답 지연으로 밀림 전달) · 받는 쪽 응답 스트리밍 · File System Access API(showSaveFilePicker) |
+| 2026-11-26 | [#57](https://github.com/esstional-tool/text-tunnel/issues/57) | [사진 JPG 강제 변환](2026-11-26-57-force-jpg.md) | 캔버스로 이미지 다시 그리기(toBlob) · 투명 배경 채우기 · createImageBitmap 실패로 HEIC 판별 |
 
 ## 노트 쓰는 법 (다음 작업부터 같은 형식)
 
